@@ -45,6 +45,7 @@ venv.bak/
 .env.local
 .env.*.local
 .env.backup
+.streamlit/secrets.toml
 
 # Database
 *.db
