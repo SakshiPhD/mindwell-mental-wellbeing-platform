@@ -1,3 +1,10 @@
+# Environment Variables & Secrets
+.env
+.env.local
+.env.*.local
+.env.backup
+.streamlit/secrets.toml
+
 # Python
 __pycache__/
 *.py[cod]
@@ -19,7 +26,6 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
 # Virtual Environments
 .venv
@@ -28,9 +34,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-.streamlit/
 
-# IDE
+# IDE & Editors
 .vscode/
 .idea/
 *.swp
@@ -40,29 +45,23 @@ venv.bak/
 *.sublime-project
 *.sublime-workspace
 
-# Environment
-.env
-.env.local
-.env.*.local
-.env.backup
+# Streamlit
+.streamlit/cache
 .streamlit/secrets.toml
 
 # Database
 *.db
 *.sqlite
 *.sqlite3
-*.postgres
 
 # Logs
 *.log
 logs/
 
-# Cache
+# Cache & Temporary
 .cache/
 *.cache
 .pytest_cache/
-
-# Test coverage
 .coverage
 htmlcov/
 
@@ -70,25 +69,38 @@ htmlcov/
 Thumbs.db
 .DS_Store
 
-# Temporary files
+# Temporary Files
 *.tmp
 *.temp
 *.backup
+*.bak
 
-# System
+# Test Files (if separate from main)
+test_*.py
+*_test.py
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# macOS AppleDouble / resource-fork junk (created on non-HFS drives)
+._*
+.AppleDouble
+.LSOverride
+
+# Submission artifacts (kept locally, not needed to run/replicate the project)
+project_report/
+submission_checklist/
+
+# Backup and old versions
+backup/
+old/
+Copy*
+
+# Node modules (if using any frontend)
+node_modules/
+npm-debug.log
+
+# System files
 .classpath
 .c9/
 .hypothesis/
-
-# Jupyter
-.ipynb_checkpoints
-
-# Keep but ignore generated files
-*.pdf
-*.png
-
-# Backup and old files
-backup/
-old/
-*.bak
-Copy*

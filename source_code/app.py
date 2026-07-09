@@ -1,6 +1,6 @@
-﻿"""
+"""
 MindWell - Mental Wellbeing Application
-Entry point that orchestrates all modules.
+Entry point for Streamlit application
 """
 from dotenv import load_dotenv
 load_dotenv()  # Load .env file BEFORE any other imports
@@ -27,11 +27,9 @@ from pages import (
     show_signup_page,
     show_trusted_adult_form,
     show_chatbot,
-    # show_profile_page  # COMMENTED OUT: Profile page disabled
 )
 
 from database import initialize_database
-
 
 # Initialize session state
 init_session_state()
@@ -53,13 +51,9 @@ elif st.session_state.page == "login":
     show_login_page()
 elif st.session_state.page == "signup":
     show_signup_page()
-elif st.session_state.page == "trusted_adult_form":
+elif st.session_state.page == "trusted_adult":
     show_trusted_adult_form()
-# COMMENTED OUT: Profile page disabled
-# elif st.session_state.page == "profile":
-#     show_profile_page(st.session_state.get("user_id"), st.session_state.get("user_name", "User"))
-elif st.session_state.page in ("chat", "chatbot"):
+elif st.session_state.page == "chat":
     show_chatbot()
 else:
-    st.session_state.page = "loading"
-    st.rerun()
+    show_loading_page()

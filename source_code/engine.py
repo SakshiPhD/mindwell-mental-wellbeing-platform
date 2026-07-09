@@ -665,7 +665,7 @@ class MultiAgentEngine:
         if summary and summary not in ("First conversation.", "Continuing our conversation."):
             parts.append(f"LAST SESSION SUMMARY:\n{summary}")
 
-        # harsh changes start
+        # custom changes start
         # 2b. Full past session history — show all past sessions with dates so the LLM
         # can recall conversations from days/weeks/months ago, not just the latest one.
         session_history = memory_data.get("session_history") or []
@@ -681,7 +681,7 @@ class MultiAgentEngine:
                     history_lines.append(f"- [{date}] {sess_summary} (mood: {tone})")
             if history_lines:
                 parts.append("ALL PAST SESSION HISTORY (most recent first):\n" + "\n".join(history_lines))
-        # harsh changes end
+        # custom changes end
 
         # 3. Mood / emotional trend
         mood_history = memory_data.get("mood_history") or []
@@ -770,7 +770,7 @@ class MultiAgentEngine:
             "this conversation",
             "in this conversation",
             "in this same conversation",
-            # harsh changes start
+            # custom changes start
             "what was it",
             "what was that",
             "so what was",
@@ -783,7 +783,7 @@ class MultiAgentEngine:
             "i said",
             "i have told you",
             "i already told",
-            # harsh changes end
+            # custom changes end
         ]
 
         short_followup_markers = {
@@ -1168,7 +1168,7 @@ class MultiAgentEngine:
 
         deterministic_recall = ""
         if needs_memory_agent:
-            # harsh changes start
+            # custom changes start
             # Lower min_score when user has history — ensures cross-session recall
             # fires even when the user doesn't explicitly say "last time" / "yesterday".
             has_history = bool(memory_data.get("has_history"))
@@ -1180,7 +1180,7 @@ class MultiAgentEngine:
                 min_score=effective_min_score,
                 allow_recent_fallback=allow_fallback,
             )
-            # harsh changes end
+            # custom changes end
         #### changes by SB end #######
 
         source_truth_lines = [f"User: {user_text}"] if user_text else ["(No current-session turns are available.)"]
@@ -1236,7 +1236,7 @@ class MultiAgentEngine:
                 "(No earlier turns from the current session are available.)"
             ]
 
-            # harsh changes start
+            # custom changes start
             if references_past:
                 session_instruction = (
                     "The user is asking about a PREVIOUS SESSION. "
@@ -1253,17 +1253,17 @@ class MultiAgentEngine:
                 + session_instruction + "\n"
                 + "\n".join(source_truth_lines)
             )
-            # harsh changes end
+            # custom changes end
 
             question_instruction = ""
             if self.ask_question_cooldown > 0:
                 question_instruction = "IMPORTANT: Do NOT end with a question in this reply."
 
             orch_parts = [source_truth_block]
-            # harsh changes start
+            # custom changes start
             if route_decision.get("intent_label") != "continuity_followup" or references_past:
                 orch_parts += common_parts
-            # harsh changes end
+            # custom changes end
 
             # deterministic_recall is scored past-session highlights relevant to the current query.
             # Previously computed above but never injected into the orchestrator prompt — wired here.
@@ -1287,9 +1287,9 @@ class MultiAgentEngine:
                 mem_recent_lines = [f"User: {user_text}"]
             mem_context = "\n\n".join(
                 [source_truth_block]
-                # harsh changes start
+                # custom changes start
                 + ([] if route_decision.get("intent_label") == "continuity_followup" and not references_past else common_parts)
-                # harsh changes end
+                # custom changes end
                 + [f"Recent conversation to summarize:\n{chr(10).join(mem_recent_lines)}"]
             )
             orch_context = self._trim_context(orch_context, max_chars=3000)  # reduced from 4800 — matches num_ctx=2048 (~3000 chars)
@@ -1464,7 +1464,7 @@ class MultiAgentEngine:
             "- Do not use onboarding, emotional history, previous sessions, or long-term memory.\n"
             "- If the exact detail is missing, say that briefly.\n"
         )
-        # harsh changes start: when user references past sessions, include full context with session history
+        # custom changes start: when user references past sessions, include full context with session history
         if route_decision.get("intent_label") == "continuity_followup" and references_past:
             # User is asking about previous session - use FULL context with memory data
             coach_relevant_context = orch_context_final
@@ -1474,9 +1474,9 @@ class MultiAgentEngine:
         else:
             # All other intents - use full context
             coach_relevant_context = orch_context_final
-        # harsh changes end
+        # custom changes end
 
-        # harsh changes start: Add special instruction when user references past sessions
+        # custom changes start: Add special instruction when user references past sessions
         coach_instructions = ""
         if route_decision.get("intent_label") == "continuity_followup" and references_past:
             coach_instructions = (
@@ -1514,7 +1514,7 @@ class MultiAgentEngine:
             f"{trusted_adult_info}\n\n"
             f"RELEVANT USER CONTEXT:\n{coach_relevant_context}"
         )
-        # harsh changes end
+        # custom changes end
 
         coach_tip = self._call_agent("coach", user_text, coach_context, risk_level=risk_level) or ""
         results["orchestrator"] = ""
@@ -1672,7 +1672,7 @@ class MultiAgentEngine:
 
         memory_mode = str(route_decision.get("memory_needed", "false")).strip().lower()
 
-        # harsh changes start
+        # custom changes start
         # Compute which memory types were actually used (not just planned by router).
         actual_memory_types = []
         if memory_data and needs_memory_agent:
@@ -1691,7 +1691,7 @@ class MultiAgentEngine:
             if memory_data.get("rag_context"):
                 actual_memory_types.append("rag_documents")
         memory_types_list = actual_memory_types
-        # harsh changes end
+        # custom changes end
 
         analysis_data = {
             "risk": risk_level,

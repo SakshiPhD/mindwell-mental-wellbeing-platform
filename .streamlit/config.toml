@@ -1,24 +1,18 @@
-# Streamlit Configuration
-
 [theme]
-primaryColor = "#1976D2"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F0F2F6"
-textColor = "#262730"
+primaryColor = "#8E2DE2"
+backgroundColor = "#0f0c29"
+secondaryBackgroundColor = "#302b63"
+textColor = "#ffffff"
 font = "sans serif"
 
 [client]
-showErrorDetails = false
-toolbarMode = "viewer"
-
-[server]
-port = 8501
-headless = true
-runOnSave = false
-maxUploadSize = 200
+showErrorDetails = true
+toolbarMode = "developer"
 
 [logger]
 level = "info"
 
-[browser]
-gatherUsageStats = false
+[server]
+port = 8501
+maxUploadSize = 200
+enableXsrfProtection = true
