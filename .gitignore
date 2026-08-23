@@ -75,9 +75,11 @@ Thumbs.db
 *.backup
 *.bak
 
-# Test Files (if separate from main)
-test_*.py
-*_test.py
+# Ad-hoc/scratch test scripts at the repo root (not the real test suite,
+# which lives in source_code/tests/ and is intentionally tracked below).
+/test_*.py
+/*_test.py
+!source_code/tests/
 
 # Jupyter Notebooks
 .ipynb_checkpoints

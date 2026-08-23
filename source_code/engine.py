@@ -885,7 +885,14 @@ class MultiAgentEngine:
         repair_trigger = has_session_context and any(
             marker in text for marker in repair_markers
         )
-        same_session_recall_trigger = has_session_context and any(
+        # Not gated by has_session_context — kept in sync with pages.py's
+        # equivalent check, which never gated this one either (only its
+        # short_followup_trigger requires session context). Found via the
+        # router-consistency test suite: this file required session context
+        # for these phrases to count as a recall request, pages.py did not,
+        # so the two routers disagreed specifically on a brand-new session's
+        # first message using recall phrasing.
+        same_session_recall_trigger = any(
             pattern in text for pattern in same_session_recall_patterns
         )
 

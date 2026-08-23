@@ -47,7 +47,10 @@ _EMOTIONAL_SUPPORT_KEYWORDS = {
 
 _COPING_KEYWORDS = {
     "help", "suggest", "advice", "cope", "coping", "manage", "what should i do",
-    "how can i", "exercise", "breathe", "breathing", "routine", "habit", "focus"
+    "how can i", "exercise", "breathe", "breathing", "routine", "habit", "focus",
+    # kept in sync with engine.py::COPING_KEYWORDS — these had drifted apart,
+    # same class of bug as the recall-pattern drift (see engine.py comment).
+    "provide", "give", "techniques", "strategies", "methods", "tips", "ways to",
 }
 
 
@@ -126,6 +129,50 @@ def check_response_grounded(response_text, rag_meta):
 
     logger.debug(f"Grounding analysis: signals={grounding_signals}, score={grounding_score:.2f}, grounded={is_grounded}")
     return is_grounded, grounding_score
+
+
+def extract_storable_facts(facts):
+    """
+    Given the raw "new_facts" dict produced by the memory agent for one turn,
+    decide which key/value pairs are worth persisting to user_memory and return
+    them as a clean {key: value_text} dict. Pure decision logic, no I/O — the
+    caller is responsible for actually calling store_user_memory() for each item.
+
+    Two real bugs lived here previously, both fixed:
+    - "topic_state" (engine bookkeeping, not a real fact) was left in when
+      checking for the legacy {"key":.., "value":..} shape the AI sometimes
+      outputs, so a genuine fact + topic_state counted as 3 keys, missed that
+      shape check, fell into the generic loop below, and got discarded there
+      too (that loop also strips anything literally named "key"/"value").
+    - a filter used to discard any fact whose value was literally "true"/
+      "false" unless its key matched one of a few hardcoded exceptions —
+      throwing away real facts like {"project_stress": "true"} purely because
+      of what the value looked like, not whether the key was meaningful.
+    """
+    if not isinstance(facts, dict):
+        return {}
+
+    facts_to_store = {k: v for k, v in facts.items() if k != "topic_state"}
+    result = {}
+
+    # Legacy shape some models fall back to: {"key": "...", "value": "..."}
+    if "key" in facts_to_store and "value" in facts_to_store and len(facts_to_store) == 2:
+        fact_key = str(facts_to_store.get("key", "")).strip()
+        fact_value = facts_to_store.get("value")
+        fact_value_text = str(fact_value).strip() if fact_value is not None else ""
+        if fact_key and fact_value is not None and len(fact_value_text) > 0:
+            result[fact_key] = fact_value_text
+        return result
+
+    for key, value in facts_to_store.items():
+        key_text = str(key).strip()
+        value_text = str(value).strip()
+        if key_text in {"key", "value"}:
+            continue
+        if value and len(value_text) > 2:
+            result[key_text] = value_text
+    return result
+
 
 # New keyword sets for smarter intent classification
 _EVENT_MARKERS = {
@@ -2835,46 +2882,14 @@ def show_chatbot():
                             from database import store_user_memory
 
                             facts = a.get("new_facts") or {}
-
-                            if isinstance(facts, dict):
-                                # topic_state is bookkeeping added by the engine, not an
-                                # extracted fact — exclude it before checking the shape below.
-                                # Previously it was left in, so a genuine {"key":.., "value":..}
-                                # fact plus topic_state counted as 3 keys, missed the legacy-shape
-                                # check, fell into the loop below, and got discarded there too
-                                # (that loop also skips anything literally named "key"/"value").
-                                # Net effect: every extracted fact was silently dropped.
-                                facts_to_store = {k: v for k, v in facts.items() if k != "topic_state"}
-
-                                # Handle legacy shape: {"key": "...", "value": ...}
-                                if "key" in facts_to_store and "value" in facts_to_store and len(facts_to_store) == 2:
-                                    fact_key = str(facts_to_store.get("key", "")).strip()
-                                    fact_value = facts_to_store.get("value")
-                                    fact_value_text = str(fact_value).strip()
-
-                                    if fact_key and fact_value is not None and len(fact_value_text) > 0:
-                                        store_user_memory(
-                                            user_id=uid,
-                                            memory_type="long_term_memory",
-                                            memory_key=fact_key,
-                                            memory_value=fact_value_text,
-                                            confidence=0.9
-                                        )
-                                else:
-                                    for key, value in facts_to_store.items():
-                                        key_text = str(key).strip()
-                                        value_text = str(value).strip()
-
-                                        if key_text in {"key", "value"}:
-                                            continue
-                                        if value and len(value_text) > 2:
-                                            store_user_memory(
-                                                user_id=uid,
-                                                memory_type="long_term_memory",
-                                                memory_key=key_text,
-                                                memory_value=value_text,
-                                                confidence=0.9
-                                            )
+                            for fact_key, fact_value_text in extract_storable_facts(facts).items():
+                                store_user_memory(
+                                    user_id=uid,
+                                    memory_type="long_term_memory",
+                                    memory_key=fact_key,
+                                    memory_value=fact_value_text,
+                                    confidence=0.9
+                                )
                         except Exception as mem_err:
                             logger.warning("Memory storage skipped: %s", mem_err)
                         ###### changes sb end ######
