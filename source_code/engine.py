@@ -91,6 +91,25 @@ MEMORY_MATCH_STOPWORDS = {
     "still", "same", "just", "again", "did", "our", "into", "been", "over",
 }
 
+# Guardrail for a specific, observed failure mode: the user asks "do you remember/know
+# X" naming a specific topic, and the model confidently confirms it even when X was
+# never actually mentioned anywhere in the real context available to it. Rather than
+# rely on prompt wording alone (tested directly — a local model does not reliably
+# follow "don't invent things" instructions), these patterns capture the named topic
+# so it can be checked in code against the real context before the model ever answers.
+RECALL_PROBE_TOPIC_PATTERNS = [
+    re.compile(r"\b(?:do|did|would)\s+you\s+(?:remember|know|recall)\b.{0,20}?\babout\s+(?:my\s+)?([a-z][a-z \-']{2,40}?)[\?\.!]*$", re.IGNORECASE),
+    re.compile(r"\b(?:did|have)\s+i\s+(?:ever\s+)?(?:tell|mention|told)\s+you\b.{0,20}?\babout\s+(?:my\s+)?([a-z][a-z \-']{2,40}?)[\?\.!]*$", re.IGNORECASE),
+    re.compile(r"\byou\s+(?:remember|know)\b.{0,20}?\babout\s+(?:my\s+)?([a-z][a-z \-']{2,40}?)[\?\.!]*$", re.IGNORECASE),
+    re.compile(r"\bwhat\s+([a-z][a-z \-']{2,40}?)\s+(?:have i|i have|did i|i did)\s+(?:shared|told|mentioned)\b", re.IGNORECASE),
+]
+
+_HONEST_NO_RECALL_TEMPLATES = [
+    "I don't think you've told me about {topic} yet — want to fill me in?",
+    "That's not something you've shared with me so far. I'd love to hear about {topic} if you want to tell me.",
+    "I don't have that on my radar yet — you haven't mentioned {topic} to me before. What's going on?",
+]
+
 CONTEXT_ECHO_PREFIXES = (
     "user:",
     "assistant:",
@@ -188,7 +207,7 @@ OUTPUT JSON:
   "tone":"specific emotional tone",
   "current_topic":"short topic label",
   "topic_lock":true,
-  "new_fact":{"key":"value"},
+  "new_fact":{"<short_fact_name>":"<fact_value>"} (for example {"occupation":"nurse"}; use {} if there is no new fact — never use the literal words "key" or "value" as the field name),
   "memory_recall":"DETAILED analysis of: past coping strategies that worked, emotional patterns, what tone/approach helps THIS user, specific examples from previous crises",
   "session_title":"short title",
   "session_summary":"high-information summary for future continuity"
@@ -294,6 +313,8 @@ Behavior:
   - Do NOT provide coping tips or memory comparisons - focus ONLY on trusted adult contact
 - If memory is provided and risk is NOT extreme, use it like a close friend who remembers — reference specific things naturally, match their emotional tone from past sessions. Do NOT list facts robotically. Weave memories into your response only when they genuinely matter.
 - If risk is EXTREME (suicidal ideation), DO NOT use memory - it distracts from immediate crisis intervention.
+- CRITICAL: If the user asks whether you remember, know, or were told something specific (a topic, event, place, or feeling), only confirm it if that exact thing literally appears in the FRIEND CONTEXT or CURRENT SESSION RECENT TURNS given to you below. Having *some* context available does not mean every topic the user asks about is covered by it — check specifically for the thing they asked about. If it is not literally there, say plainly that they haven't mentioned that specific thing to you yet and ask them to share it. Never invent a past conversation, a fact about the user, or an emotion they supposedly shared just because they asked "do you remember" — inventing a false memory is worse than admitting you don't have it.
+- Never output placeholder or template text such as "[insert ... if any]", "[specific detail]", or similar bracketed fill-in-the-blank text — if you don't have the specific detail, say so in plain words instead of leaving a placeholder.
 - When the user describes a personal situation, respond to their specific concern first before giving any general background.
 - When the user expresses stress, anxiety, confusion, disappointment, or asks for support,
   prioritize emotional support and practical guidance over topic analysis.
@@ -385,6 +406,57 @@ class MultiAgentEngine:
     def _extract_keywords(self, text):
         tokens = re.findall(r"[a-z0-9']+", (text or "").lower())
         return {tok for tok in tokens if len(tok) > 2 and tok not in MEMORY_MATCH_STOPWORDS}
+
+    def _find_unverified_recall_topic(self, user_text, available_context):
+        """
+        Detect "do you remember/know about X" style questions naming a specific topic,
+        and check whether X is actually present in the real context the Coach is about
+        to receive. Returns the matched topic phrase if X is NOT grounded anywhere in
+        available_context (the guardrail should fire), or None if either the message
+        isn't this kind of question, or the topic genuinely is present (let the LLM
+        answer normally — it has real grounds to).
+        """
+        text = (user_text or "").strip()
+        if not text:
+            return None
+
+        topic_phrase = None
+        for pattern in RECALL_PROBE_TOPIC_PATTERNS:
+            match = pattern.search(text)
+            if match:
+                topic_phrase = match.group(1).strip()
+                break
+        if not topic_phrase:
+            return None
+
+        topic_keywords = self._extract_keywords(topic_phrase)
+        if not topic_keywords:
+            # Nothing specific enough to check (e.g., just stopwords) — let the LLM
+            # handle it normally rather than risk a false-positive block.
+            return None
+
+        # available_context always ends with the current question echoed back in
+        # (e.g. "User: you remember about my relocation?") so the topic word the
+        # person just used would otherwise always trivially match itself. Strip the
+        # current message out before searching so only genuine prior context counts.
+        haystack = (available_context or "").lower()
+        current_line = text.lower()
+        haystack = haystack.replace(current_line, "")
+        haystack_words = set(re.findall(r"[a-z0-9']+", haystack))
+
+        for kw in topic_keywords:
+            if kw in haystack:
+                return None  # exact match in real prior context — fine
+            # Plain substring matching misses simple word-form variants (e.g. the
+            # user asks about "relocation" but the stored context says "relocated").
+            # A shared 6-character prefix is a cheap, effective stand-in for real
+            # stemming for this purpose.
+            if len(kw) >= 6:
+                stem = kw[:6]
+                if any(w.startswith(stem) for w in haystack_words if len(w) >= 6):
+                    return None
+
+        return topic_phrase
 
     def _is_context_echo_line(self, line):
         stripped = str(line or "").strip()
@@ -784,6 +856,19 @@ class MultiAgentEngine:
             "i have told you",
             "i already told",
             # custom changes end
+            # kept in sync with pages.py::_SAME_SESSION_RECALL_PATTERNS — these two lists
+            # do the same job (recognizing "please recall this conversation" phrasing) and
+            # had drifted apart, which is exactly what let "do you have context what we
+            # were discussing?" be fetched as memory but not treated as a recall request.
+            "what we have discussed",
+            "what we discussed",
+            "we discussed",
+            "what we talked about",
+            "we talked about",
+            "remember discussing",
+            "we were discussing",
+            "about what we",
+            "earlier we",
         ]
 
         short_followup_markers = {
@@ -1183,7 +1268,21 @@ class MultiAgentEngine:
             # custom changes end
         #### changes by SB end #######
 
-        source_truth_lines = [f"User: {user_text}"] if user_text else ["(No current-session turns are available.)"]
+        # Always include the last few turns of THIS session's own buffer, regardless of
+        # whether the router decided long-term/DB memory is needed. This costs nothing
+        # (already in memory, no DB or LLM call) and is what was missing when the router
+        # misjudged a message as not needing memory: the Coach had literally zero
+        # conversation context and would confidently invent a plausible-sounding "I
+        # remember..." answer rather than admit it had nothing to go on.
+        source_truth_lines = []
+        for u, a in self._session_buffer[-4:]:
+            source_truth_lines.append(f"User: {u}")
+            if a:
+                source_truth_lines.append(f"Assistant: {' '.join(str(a).split())}")
+        if user_text:
+            source_truth_lines.append(f"User: {user_text}")
+        if not source_truth_lines:
+            source_truth_lines = ["(No current-session turns are available.)"]
         source_truth_block = (
             "CURRENT SESSION RECENT TURNS (SOURCE OF TRUTH):\n"
             "Trust these turns first. Use only this current-session conversation for recall and continuity. "
@@ -1466,14 +1565,21 @@ class MultiAgentEngine:
         )
         # custom changes start: when user references past sessions, include full context with session history
         if route_decision.get("intent_label") == "continuity_followup" and references_past:
-            # User is asking about previous session - use FULL context with memory data
-            coach_relevant_context = orch_context_final
+            # User is asking about previous session - use FULL context with memory data.
+            # Same empty-context gap as the "else" branch below: if memory wasn't
+            # actually fetched (e.g. memory_data was empty), orch_context_final is ""
+            # even though the user explicitly referenced the past — fall back to the
+            # always-on session-buffer block rather than giving the Coach nothing.
+            coach_relevant_context = orch_context_final or source_truth_block
         elif route_decision.get("intent_label") == "continuity_followup" and not references_past:
             # Current session continuity - use only current turns
-            coach_relevant_context = continuity_only_context
+            coach_relevant_context = continuity_only_context or source_truth_block
         else:
-            # All other intents - use full context
-            coach_relevant_context = orch_context_final
+            # All other intents - use full context. When the router decided memory
+            # wasn't needed, orch_context_final is empty — fall back to the always-on
+            # session-buffer block so the Coach still has real, grounded conversation
+            # history instead of nothing (which is what let it invent false memories).
+            coach_relevant_context = orch_context_final or source_truth_block
         # custom changes end
 
         # custom changes start: Add special instruction when user references past sessions
@@ -1516,7 +1622,20 @@ class MultiAgentEngine:
         )
         # custom changes end
 
-        coach_tip = self._call_agent("coach", user_text, coach_context, risk_level=risk_level) or ""
+        # Guardrail: never let the model confirm a specific "do you remember X" claim
+        # unless X is actually grounded in the real context it was just handed. Only
+        # eligible when risk is low — a crisis turn must always go through the full
+        # Coach/safety handling, never a canned short-circuit reply.
+        unverified_topic = None
+        if risk_level == "low":
+            unverified_topic = self._find_unverified_recall_topic(user_text, coach_relevant_context)
+
+        if unverified_topic:
+            template = _HONEST_NO_RECALL_TEMPLATES[self.message_count % len(_HONEST_NO_RECALL_TEMPLATES)]
+            coach_tip = template.format(topic=unverified_topic)
+            logger.info("Recall guardrail fired: topic=%r not found in available context — skipped LLM call", unverified_topic)
+        else:
+            coach_tip = self._call_agent("coach", user_text, coach_context, risk_level=risk_level) or ""
         results["orchestrator"] = ""
         results["coach"] = coach_tip
         ##### changes by SB end #######

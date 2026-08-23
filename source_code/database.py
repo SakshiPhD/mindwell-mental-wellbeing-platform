@@ -15,10 +15,81 @@ import logging
 import uuid
 import time
 import hashlib
+import os
+import toml
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+
+
+def _load_db_credentials():
+    """Return Postgres credentials as a dict with keys: host, database, user,
+    password, port, sslmode — or None if none of the sources below have them.
+
+    st.secrets resolves .streamlit/secrets.toml relative to the process's
+    current working directory. That silently breaks DB connectivity if the
+    app is launched with a different working directory than expected — both
+    `cd source_code && streamlit run app.py` (documented in the setup guide)
+    and `streamlit run source_code/app.py` from the project root are valid
+    ways to start this app, but only the second one actually finds the
+    secrets file. Reading the file directly from a location anchored to this
+    module fixes that regardless of how the app was launched.
+
+    Resolution order:
+      1. .streamlit/secrets.toml read directly, anchored to this file's
+         location (works regardless of current working directory).
+      2. st.secrets["postgres"] — covers managed deployments (e.g. Streamlit
+         Community Cloud) where secrets are injected without a physical file
+         at a predictable path.
+      3. Environment variables (DB_HOST, DB_PORT, DB_NAME, DB_USER,
+         DB_PASSWORD, DB_SSLMODE) — the .env-based configuration the
+         project's own setup docs describe, previously unsupported by code.
+    """
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        secrets_path = os.path.abspath(os.path.join(here, "..", ".streamlit", "secrets.toml"))
+        if os.path.isfile(secrets_path):
+            with open(secrets_path, "r") as f:
+                parsed = toml.load(f)
+            pg = parsed.get("postgres")
+            if pg and pg.get("host") and pg.get("database") and pg.get("user"):
+                return {
+                    "host": pg["host"],
+                    "database": pg["database"],
+                    "user": pg["user"],
+                    "password": pg.get("password", ""),
+                    "port": pg.get("port", 5432),
+                    "sslmode": pg.get("sslmode", "require"),
+                }
+    except Exception as e:
+        logger.warning("Could not read .streamlit/secrets.toml directly: %s", _compact_error(e))
+
+    try:
+        pg = st.secrets["postgres"]
+        if pg.get("host") and pg.get("database") and pg.get("user"):
+            return {
+                "host": pg["host"],
+                "database": pg["database"],
+                "user": pg["user"],
+                "password": pg.get("password", ""),
+                "port": pg.get("port", 5432),
+                "sslmode": pg.get("sslmode", "require"),
+            }
+    except Exception:
+        pass
+
+    if os.getenv("DB_HOST") and os.getenv("DB_NAME") and os.getenv("DB_USER"):
+        return {
+            "host": os.getenv("DB_HOST"),
+            "database": os.getenv("DB_NAME"),
+            "user": os.getenv("DB_USER"),
+            "password": os.getenv("DB_PASSWORD", ""),
+            "port": os.getenv("DB_PORT", "5432"),
+            "sslmode": os.getenv("DB_SSLMODE", "require"),
+        }
+
+    return None
 
 
 def _should_use_rag(query: str) -> bool:
@@ -103,14 +174,16 @@ def _activate_pool_bypass():
 def _connect_direct():
     """Create a one-off direct DB connection as a fallback path."""
     try:
-        creds = st.secrets["postgres"]
+        creds = _load_db_credentials()
+        if not creds:
+            raise RuntimeError("No database credentials found (checked secrets.toml, st.secrets, and env vars)")
         return psycopg2.connect(
             host=creds["host"],
             database=creds["database"],
             user=creds["user"],
             password=creds["password"],
             port=creds["port"],
-            sslmode="require",
+            sslmode=creds.get("sslmode", "require"),
             connect_timeout=10,
             keepalives=1,
             keepalives_idle=30,
@@ -129,7 +202,9 @@ def _get_pool():
         with _pool_lock:
             if _pool is None:
                 try:
-                    creds = st.secrets["postgres"]
+                    creds = _load_db_credentials()
+                    if not creds:
+                        raise RuntimeError("No database credentials found (checked secrets.toml, st.secrets, and env vars)")
                     _pool = pg_pool.ThreadedConnectionPool(
                         2, 10,
                         host=creds["host"],
@@ -137,7 +212,7 @@ def _get_pool():
                         user=creds["user"],
                         password=creds["password"],
                         port=creds["port"],
-                        sslmode="require",
+                        sslmode=creds.get("sslmode", "require"),
                         connect_timeout=10,
                         keepalives=1,
                         keepalives_idle=30,
@@ -2103,6 +2178,9 @@ def update_master_analysis(
                     msg = str(upsert_err).lower()
                     if "no unique or exclusion constraint matching the on conflict specification" not in msg:
                         raise
+                    # The failed statement above aborted the transaction — Postgres will
+                    # reject any further command on this connection until we roll back.
+                    conn.rollback()
                     cur.execute(
                         """
                         INSERT INTO chat_analysis (
@@ -2302,6 +2380,46 @@ def finalize_session_analysis(user_id, session_id):
         reply_source=reply_source,
         finalize_summary=True,
     )
+
+    # Also persist facts into user_memory here, at session finalization — not just
+    # relying on the per-turn LLM memory agent (pages.py's _save_bg), which only
+    # writes a fact when its own "new_fact" JSON happens to be non-empty for that
+    # exact turn. Observed directly: a real message clearly containing new facts
+    # ("stressed because of work", "not sleeping properly") got a genuinely empty
+    # new_fact:{} from the LLM, so nothing was ever stored. _extract_facts_from_messages
+    # (the same deterministic extractor already powering chat_analysis reliably) is
+    # not dependent on the LLM's per-turn judgment, so use it here as the dependable
+    # path — the LLM per-turn path still runs too and can only add rows sooner.
+    if result and facts:
+        try:
+            for key, value in facts.items():
+                if key in {"topic_state", "key", "value"}:
+                    continue
+                if isinstance(value, dict):
+                    for sub_key, sub_value in value.items():
+                        if sub_key in {"topic_state", "key", "value"} or sub_key.startswith("_"):
+                            continue
+                        sub_value_text = str(sub_value).strip()
+                        if sub_value_text and len(sub_value_text) > 1:
+                            store_user_memory(
+                                user_id=user_id,
+                                memory_type="long_term_memory",
+                                memory_key=sub_key,
+                                memory_value=sub_value_text,
+                                confidence=0.8,
+                            )
+                else:
+                    value_text = str(value).strip()
+                    if value_text and len(value_text) > 1:
+                        store_user_memory(
+                            user_id=user_id,
+                            memory_type="long_term_memory",
+                            memory_key=key,
+                            memory_value=value_text,
+                            confidence=0.8,
+                        )
+        except Exception as e:
+            logger.warning("Session-finalize memory storage skipped: %s", e)
 
     # Auto-ingest session facts into RAG after successful finalization.
     # Runs in a daemon thread — never blocks the response path.
@@ -3014,6 +3132,25 @@ def add_chat_analysis_architecture_columns(cur):
         except Exception as e:
             logger.warning(f"chat_analysis migration warning: {e}")
 
+def add_chat_analysis_unique_constraint(cur):
+    """
+    chat_analysis was created without a uniqueness guarantee on (user_id, session_id),
+    but update_master_analysis() upserts with `ON CONFLICT (user_id, session_id)`.
+    Without a matching unique index, Postgres rejects every upsert with
+    InvalidColumnReference, which silently breaks all writes to this table.
+    A unique index satisfies ON CONFLICT just as well as a named constraint.
+    """
+    try:
+        cur.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS chat_analysis_user_session_idx
+            ON chat_analysis(user_id, session_id);
+            """
+        )
+    except Exception as e:
+        logger.warning(f"chat_analysis unique index migration warning: {e}")
+
+
 def drop_legacy_agent_columns(cur):
     """Remove legacy agent columns (safety_agent, memory_agent, orchestrator_agent, coach_agent)."""
     statements = [
@@ -3147,33 +3284,69 @@ def fetch_trusted_adult_info(user_id):
         return {"trusted_adult_name": "", "trusted_adult_phone": ""}
 
 
+_db_initialized = False
+
+
 def initialize_database():
+    # Streamlit reruns the entire app.py script on every user interaction
+    # (every click, every chat message), and app.py calls this unconditionally
+    # at module level. Without this guard, the full schema/migration sequence
+    # below — measured at 10-13 seconds of real Neon round-trips — was
+    # re-running on every single interaction, not once at process startup.
+    # Schema state doesn't change per interaction, so do the real work once
+    # per process and let every later call return immediately.
+    global _db_initialized
+    if _db_initialized:
+        return True
+
     with get_pooled_connection() as conn:
         if not conn:
             return False
 
         cur = conn.cursor()
 
-        create_users_table(cur)
-        add_email_password_columns(cur)
-        add_trusted_adult_columns(cur)
-        create_chat_messages_table(cur)
-        create_chat_analysis_table(cur)
-        create_onboarding_table(cur)
-        create_memory_table(cur)
-        create_rag_documents_table(cur)
+        # All of the steps below share one uncommitted transaction. If any single
+        # step fails (e.g. a transient Neon hiccup, or two overlapping app reruns
+        # racing on the same DDL), Postgres aborts the whole transaction and every
+        # later statement raises InFailedSqlTransaction — which, uncaught, used to
+        # propagate out of this function, out of app.py's module-level call, and
+        # crash the entire page with a raw traceback instead of the app. This is
+        # observed and reproducible, not hypothetical: it happened during testing.
+        # Catch it here so a transient failure degrades to "try again next rerun"
+        # instead of showing every user a broken page.
+        try:
+            create_users_table(cur)
+            add_email_password_columns(cur)
+            add_trusted_adult_columns(cur)
+            create_chat_messages_table(cur)
+            create_chat_analysis_table(cur)
+            create_onboarding_table(cur)
+            create_memory_table(cur)
+            create_rag_documents_table(cur)
 
-        # Skip problematic migrations - they cause transaction issues
-        # These are optional schema updates that aren't critical for core functionality
-        logger.info("⏭️  Skipping optional schema migrations (database is functional)")
+            # Apply the additive schema migrations required by the current save paths.
+            # Every statement uses `ADD COLUMN IF NOT EXISTS`, so this is safe on both
+            # a new database and an existing database.  These are not optional:
+            # `save_chat_message` writes the chat metadata columns and
+            # `update_master_analysis` writes the analysis columns.
+            add_chat_messages_architecture_columns(cur)
+            add_rag_tracking_columns(cur)
+            add_chat_analysis_architecture_columns(cur)
+            add_chat_analysis_unique_constraint(cur)
 
-        conn.commit()
+            conn.commit()
 
-        # Log diagnostics before closing
-        _diagnose_database_health(cur)
+            # Log diagnostics before closing
+            _diagnose_database_health(cur)
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Database initialization failed, will retry on next run: {e}")
+            return False
+        finally:
+            cur.close()
 
-        cur.close()
         logger.info("✅ Database initialization completed successfully")
+        _db_initialized = True
         return True
 
 

@@ -31,7 +31,9 @@ from config import DEMO_MODE
 
 import queue as _queue
 _pending_save_queue = _queue.Queue()
-SESSION_IDLE_MINUTES = 15
+SESSION_IDLE_MINUTES = 15  # reverted: 1 minute was shorter than real reply+read+type gaps and was
+# silently splitting live conversations mid-flow (observed directly: a normal 90-second gap between
+# messages triggered a session cutover, breaking "current session" memory for everything after it).
 _session_finalize_timers = {}
 _session_finalize_lock = threading.Lock()
 
@@ -169,7 +171,7 @@ _EXTREME_CRISIS_KEYWORDS = {
     # Finality/No Return
     "this is my last", "last conversation", "won't respond after",
     "i'm done", "completely done", "no more", "it's decided",
-    "no going back", "the end", "it's final", "final decision",
+    "no going back", "this is the end", "it's final", "final decision",
     "no more talking", "don't try to stop me", "won't be stopped",
 
     # Previous Attempts (HIGH RISK)
@@ -2833,41 +2835,37 @@ def show_chatbot():
                             from database import store_user_memory
 
                             facts = a.get("new_facts") or {}
-                            meaningful_boolean_keys = {
-                                "mindfulness_practice",
-                                "recent_life_changes",
-                                "has_support_system",
-                                "support_system_available",
-                                "recently_qatar_opened_its_airspace",
-                                "stressed_today",
-                            }
 
                             if isinstance(facts, dict):
+                                # topic_state is bookkeeping added by the engine, not an
+                                # extracted fact — exclude it before checking the shape below.
+                                # Previously it was left in, so a genuine {"key":.., "value":..}
+                                # fact plus topic_state counted as 3 keys, missed the legacy-shape
+                                # check, fell into the loop below, and got discarded there too
+                                # (that loop also skips anything literally named "key"/"value").
+                                # Net effect: every extracted fact was silently dropped.
+                                facts_to_store = {k: v for k, v in facts.items() if k != "topic_state"}
+
                                 # Handle legacy shape: {"key": "...", "value": ...}
-                                if "key" in facts and "value" in facts and len(facts) == 2:
-                                    fact_key = str(facts.get("key", "")).strip()
-                                    fact_value = facts.get("value")
+                                if "key" in facts_to_store and "value" in facts_to_store and len(facts_to_store) == 2:
+                                    fact_key = str(facts_to_store.get("key", "")).strip()
+                                    fact_value = facts_to_store.get("value")
                                     fact_value_text = str(fact_value).strip()
 
                                     if fact_key and fact_value is not None and len(fact_value_text) > 0:
-                                        if fact_value_text.lower() in {"true", "false"} and fact_key not in meaningful_boolean_keys:
-                                            pass
-                                        else:
-                                            store_user_memory(
-                                                user_id=uid,
-                                                memory_type="long_term_memory",
-                                                memory_key=fact_key,
-                                                memory_value=fact_value_text,
-                                                confidence=0.9
-                                            )
+                                        store_user_memory(
+                                            user_id=uid,
+                                            memory_type="long_term_memory",
+                                            memory_key=fact_key,
+                                            memory_value=fact_value_text,
+                                            confidence=0.9
+                                        )
                                 else:
-                                    for key, value in facts.items():
+                                    for key, value in facts_to_store.items():
                                         key_text = str(key).strip()
                                         value_text = str(value).strip()
 
-                                        if key_text in {"topic_state", "key", "value"}:
-                                            continue
-                                        if value_text.lower() in {"true", "false"} and key_text not in meaningful_boolean_keys:
+                                        if key_text in {"key", "value"}:
                                             continue
                                         if value and len(value_text) > 2:
                                             store_user_memory(

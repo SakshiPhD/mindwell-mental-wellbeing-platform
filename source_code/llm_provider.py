@@ -95,11 +95,17 @@ AGENT_CONFIG = {
     },
     "coach": {
         "temperature": 0.45,
-        "num_predict": 150,      # reduced from 180 — coach tips are short and focused
+        # 150 was cutting replies off mid-sentence whenever the coach prompt's own
+        # "coping_request: give 3-5 compact bullets" instruction produced a genuinely
+        # longer reply — observed directly in real use, not hypothetical. Bumped up,
+        # and max_retries below now lets the existing "hit length limit, try again
+        # with more room" recovery in _call_ollama actually engage (it was silently
+        # disabled at max_retries=0).
+        "num_predict": 220,
         "num_ctx": 2048,         # reduced from 3072
         "model": AVAILABLE_MODELS["quality"],
         "timeout_seconds": 110,
-        "max_retries": 0,
+        "max_retries": 1,
     },
 }
 
