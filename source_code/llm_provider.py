@@ -1,7 +1,13 @@
 """
-LLM Provider Abstraction Layer - Dependency Free Version
-========================================================
-Uses direct HTTP requests to Ollama.
+LLM Provider Abstraction Layer
+===============================
+The actual model call goes through LangChain's ChatOllama (langchain-ollama)
+instead of a hand-rolled HTTP client — same public interface
+(LLMProvider.call_llm), same circuit breaker / retry / model-fallback logic,
+now behind a swappable model-provider layer instead of one hard-coded to
+Ollama specifically. Health-check/model-discovery endpoints (/api/version,
+/api/tags) still use plain requests — they're simple GETs unrelated to the
+actual chat completion, no reason to bring LangChain into that path too.
 """
 
 import logging
@@ -12,6 +18,10 @@ import time
 from typing import Dict, Any
 
 import requests
+import httpx
+import ollama
+from langchain_ollama import ChatOllama
+from langchain_core.messages import SystemMessage, HumanMessage
 
 logger = logging.getLogger(__name__)
 
@@ -360,22 +370,10 @@ class LLMProvider:
             base_num_predict = 220
         base_num_predict = max(32, base_num_predict)
 
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_input},
-            ],
-            "stream": False,
-            "keep_alive": "30m",
-            "options": {
-                "temperature": config.get("temperature", 0.7),
-                "num_predict": base_num_predict,
-                "num_ctx": config.get("num_ctx", 2048),  # reduced from 4096 — smaller ctx = faster llama3 inference
-            },
-        }
-        if config.get("json_output"):
-            payload["format"] = "json"
+        temperature = config.get("temperature", 0.7)
+        num_ctx = config.get("num_ctx", 2048)  # reduced from 4096 — smaller ctx = faster llama3 inference
+        json_output = bool(config.get("json_output"))
+        messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_input)]
 
         installed = LLMProvider._fetch_installed_models(base)
         current_model = model
@@ -429,18 +427,24 @@ class LLMProvider:
 
         for attempt in range(max_attempts):
             try:
-                payload["model"] = current_model
                 # Keep retries adaptive: slightly reduce generation length and
                 # allow more time after the first attempt for cold starts.
-                payload["options"]["num_predict"] = current_num_predict
                 request_timeout = min(timeout_seconds + (attempt * 12), max(timeout_seconds, 120))
+                llm = ChatOllama(
+                    model=current_model,
+                    base_url=base,
+                    temperature=temperature,
+                    num_predict=current_num_predict,
+                    num_ctx=num_ctx,
+                    keep_alive="30m",
+                    format="json" if json_output else "",
+                    client_kwargs={"timeout": request_timeout},
+                )
                 with _ollama_request_gate:
-                    response = requests.post(url, json=payload, timeout=request_timeout)
-                response.raise_for_status()
-                data = response.json()
+                    response = llm.invoke(messages)
                 LLMProvider._record_success(current_model)
-                content = str(data.get("message", {}).get("content", "") or "")
-                done_reason = str(data.get("done_reason", "") or "").strip().lower()
+                content = str(response.content or "")
+                done_reason = str(response.response_metadata.get("done_reason", "") or "").strip().lower()
 
                 if done_reason in {"length", "max_tokens"}:
                     logger.warning(
@@ -460,7 +464,7 @@ class LLMProvider:
                     )
 
                 return content
-            except requests.exceptions.Timeout:
+            except httpx.TimeoutException:
                 logger.warning("LLM Timeout: model=%s attempt=%d/%d", current_model, attempt + 1, max_attempts)
                 LLMProvider._record_failure(current_model)
                 if allow_timeout_model_fallback and not used_fallback:
@@ -486,15 +490,9 @@ class LLMProvider:
                     LLMProvider._backoff_sleep(attempt)
                 else:
                     return ""
-            except requests.exceptions.HTTPError as e:
-                status_code = e.response.status_code if e.response is not None else "unknown"
-                detail = ""
-                if e.response is not None:
-                    try:
-                        detail = str(e.response.json().get("error", "")).strip()
-                    except Exception:
-                        detail = (e.response.text or "").strip()
-                detail = detail[:220] if detail else str(e)
+            except ollama.ResponseError as e:
+                status_code = e.status_code if e.status_code and e.status_code > 0 else "unknown"
+                detail = str(e.error or "").strip()[:220] or str(e)
                 logger.error(
                     "LLM HTTP Error: status=%s model=%s attempt=%d/%d detail=%s",
                     status_code, current_model, attempt + 1, max_attempts, detail,
@@ -565,12 +563,12 @@ class LLMProvider:
                     LLMProvider._backoff_sleep(attempt)
                 else:
                     return ""
-            except requests.exceptions.RequestException as e:
+            except (ConnectionError, ollama.RequestError, httpx.HTTPError) as e:
                 logger.error(
                     "LLM Request Error: model=%s attempt=%d/%d error=%s",
                     current_model, attempt + 1, max_attempts, e,
                 )
-                if isinstance(e, requests.exceptions.ConnectionError):
+                if isinstance(e, ConnectionError):
                     LLMProvider._mark_service_unavailable()
                 LLMProvider._record_failure(current_model)
                 if attempt < max_attempts - 1:
