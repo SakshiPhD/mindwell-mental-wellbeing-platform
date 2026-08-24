@@ -8,6 +8,13 @@ load_dotenv()  # Load .env file BEFORE any other imports
 import streamlit as st
 import re
 
+# Opt-in only: activates LangSmith tracing if real credentials are configured,
+# otherwise the app runs exactly as it did with no tracing code at all. Must
+# only ever trace synthetic/test conversations until a redaction/consent/
+# retention policy exists — see tracing.py's module docstring.
+from tracing import configure_tracing
+configure_tracing(environment="development")
+
 # Configure page first (must be first Streamlit command)
 st.set_page_config(
     page_title="MindWell",

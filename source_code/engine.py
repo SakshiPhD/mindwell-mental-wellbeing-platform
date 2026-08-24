@@ -896,6 +896,7 @@ class MultiAgentEngine:
 
     def _call_agent(self, agent_name, user_input, memory_context="", risk_level="low"):
         import time
+        from langsmith import trace
         start_time = time.time()
         try:
             prompt = AGENT_PROMPTS[agent_name]
@@ -912,8 +913,25 @@ class MultiAgentEngine:
                 )
 
             logger.info("Agent '%s' starting (context_size=%d chars)", agent_name, context_size)
-            response = LLMProvider.call_llm(agent_name, prompt, user_input)
-            elapsed = time.time() - start_time
+            # Named per agent (safety/memory/coach) rather than a single generic
+            # "_call_agent" node, so a trace actually shows which step is which —
+            # the roadmap's own requirement ("use meaningful run names"). A no-op
+            # (~20-50 microseconds measured) when tracing isn't configured, so
+            # this never costs anything on the common path.
+            # Deliberately not logging user_input or memory_context (the actual
+            # conversation content) into the trace — only shapes/sizes/timing.
+            # This stays true regardless of what real content ever flows through
+            # here; a policy decision to trace real message content would need
+            # its own explicit, reviewed change, not a side effect of this one.
+            with trace(
+                name=f"agent:{agent_name}",
+                run_type="chain",
+                inputs={"context_size_chars": context_size, "risk_level": risk_level},
+                metadata={"agent_type": agent_name},
+            ) as run:
+                response = LLMProvider.call_llm(agent_name, prompt, user_input)
+                elapsed = time.time() - start_time
+                run.end(outputs={"response_len": len(response or ""), "elapsed_s": round(elapsed, 3)})
 
             preview = "empty"
             if response:
