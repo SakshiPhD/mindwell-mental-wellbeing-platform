@@ -9,9 +9,18 @@ streamlit==1.28.1
 psycopg2-binary==2.9.9
 python-dotenv==1.0.0
 langchain==0.2.14
-langchain-core==0.2.36
+# langchain-core bumped from 0.2.36 -> 0.2.43 (still same 0.2.x generation as
+# everything else here, not a leap to the modern 1.x line) specifically
+# because langgraph==0.2.76 requires langchain-core>=0.2.43. langchain-ollama
+# also bumped 0.1.2 -> 0.1.3 because 0.1.2 pinned langchain-core to *exactly*
+# 0.2.36 (no range), which made it impossible to satisfy both packages at
+# once. Verified after the bump: ChatOllama still works, all existing tests
+# still pass. Installing the plain `langgraph` latest release pulls in
+# langchain-core 1.x and silently breaks langchain-ollama — pin explicitly.
+langchain-core==0.2.43
 langchain-community==0.2.12
-langchain-ollama==0.1.2
+langchain-ollama==0.1.3
+langgraph==0.2.76
 textblob==0.17.1
 openai>=1.0.0
 faiss-cpu>=1.7.4
