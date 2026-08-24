@@ -148,6 +148,77 @@ EMOTIONAL_SUPPORT_KEYWORDS = {
     "lonely", "angry", "frustrated", "panic", "empty"
 }
 
+# Hoisted from inside MultiAgentEngine._route_message to module level so
+# router_graph.py can reuse them too, instead of becoming a fourth
+# independent copy of logic that has already drifted three times.
+CONTINUITY_MARKERS = [
+    "last reply", "previous reply", "your reply", "your last reply",
+    "last sentence", "previous message", "earlier message",
+    "what you said", "you said", "you just said", "finish your sentence",
+    "check your last", "check your reply", "see your last",
+    "incomplete", "cut off", "truncated", "you were saying", "finish what you said",
+    "previous messages", "our previous messages",
+    "you could not fetch", "you forgot", "you missed", "complete your sentence",
+    "what i told you last", "what did i tell you last", "did i tell you anything",
+    "did i mention", "what did i say", "what do you understand",
+    "few messages ago", "this conversation", "in this same conversation",
+    "our current conversation", "what i told you", "what reason i gave",
+    "your last sentence is incomplete", "complete the sentence", "what after",
+    "you replied me", "you replied", "what did you mean after",
+    "what comes after", "you are not taking the context",
+    "do you know what we were discussing", "you replied me",
+    "complete that sentence", "finish your sentence",
+    "finish that line", "finish your last line", "do you know what we were discussing",
+]
+
+REPAIR_MARKERS = [
+    "wrong", "incorrect", "not what i said", "not what you said",
+    "read again", "look again", "check again", "recheck"
+]
+
+SAME_SESSION_RECALL_PATTERNS = [
+    "what did i tell you",
+    "what did i say",
+    "did i mention",
+    "do you remember what we were discussing",
+    "what were we discussing",
+    "this conversation",
+    "in this conversation",
+    "in this same conversation",
+    "what was it",
+    "what was that",
+    "so what was",
+    "tell me what",
+    "you said",
+    "what did you say",
+    "what exactly",
+    "what i told",
+    "i told you",
+    "i said",
+    "i have told you",
+    "i already told",
+    # kept in sync with pages.py::_SAME_SESSION_RECALL_PATTERNS — these two lists
+    # do the same job (recognizing "please recall this conversation" phrasing) and
+    # had drifted apart, which is exactly what let "do you have context what we
+    # were discussing?" be fetched as memory but not treated as a recall request.
+    "what we have discussed",
+    "what we discussed",
+    "we discussed",
+    "what we talked about",
+    "we talked about",
+    "remember discussing",
+    "we were discussing",
+    "about what we",
+    "earlier we",
+]
+
+SHORT_FOLLOWUP_MARKERS = {
+    "continue", "go on", "tell me more", "yes continue", "yes, continue",
+    "yes explore", "explore", "complete it", "complete your sentence",
+    "yes acknowledge", "acknowledge", "elaborate",
+    "okay continue", "ok continue", "carry on",
+}
+
 COPING_KEYWORDS = {
     "help", "suggest", "advice", "cope", "coping", "manage", "what should i do",
     "how can i", "exercise", "breathe", "breathing", "routine", "habit", "focus",
@@ -799,190 +870,24 @@ class MultiAgentEngine:
         """
         Lightweight orchestrator/router before memory-heavy prompt building.
         Returns routing metadata aligned with the locked architecture.
+
+        Delegates to router_graph.route() — the single LangGraph-based
+        implementation of this decision, also used by
+        pages.py::_detect_intent_from_prompt. This used to be two
+        independently-maintained copies of the same logic, which drifted
+        apart three times during development before the router-consistency
+        test suite caught it. Deferred import: router_graph imports the
+        keyword-list constants below from this module, so importing it at
+        module level here would be circular.
         """
-        text = " ".join((user_input or "").strip().lower().split())
-        word_count = len(text.split())
+        from router_graph import route
         has_session_context = bool(self._session_buffer)
-
-        is_greeting = text in {
-            "hi", "hello", "hey", "hii", "hie", "yo", "sup", "hiii",
-            "good morning", "good evening", "good night"
-        }
-
-        continuity_markers = [
-            "last reply", "previous reply", "your reply", "your last reply",
-            "last sentence", "previous message", "earlier message",
-            "what you said", "you said", "you just said", "finish your sentence",
-            "check your last", "check your reply", "see your last",
-            "incomplete", "cut off", "truncated", "you were saying", "finish what you said",
-            "previous messages", "our previous messages",
-            "you could not fetch", "you forgot", "you missed", "complete your sentence",
-            "what i told you last", "what did i tell you last", "did i tell you anything",
-            "did i mention", "what did i say", "what do you understand",
-            "few messages ago", "this conversation", "in this same conversation",
-            "our current conversation", "what i told you", "what reason i gave",
-            "your last sentence is incomplete", "complete the sentence", "what after",
-            "you replied me", "you replied", "what did you mean after",
-            "what comes after", "you are not taking the context",
-            "do you know what we were discussing", "you replied me",
-            "complete that sentence", "finish your sentence",
-            "finish that line", "finish your last line", "do you know what we were discussing",
-        ]
-
-        repair_markers = [
-            "wrong", "incorrect", "not what i said", "not what you said",
-            "read again", "look again", "check again", "recheck"
-        ]
-        same_session_recall_patterns = [
-            "what did i tell you",
-            "what did i say",
-            "did i mention",
-            "do you remember what we were discussing",
-            "what were we discussing",
-            "this conversation",
-            "in this conversation",
-            "in this same conversation",
-            # custom changes start
-            "what was it",
-            "what was that",
-            "so what was",
-            "tell me what",
-            "you said",
-            "what did you say",
-            "what exactly",
-            "what i told",
-            "i told you",
-            "i said",
-            "i have told you",
-            "i already told",
-            # custom changes end
-            # kept in sync with pages.py::_SAME_SESSION_RECALL_PATTERNS — these two lists
-            # do the same job (recognizing "please recall this conversation" phrasing) and
-            # had drifted apart, which is exactly what let "do you have context what we
-            # were discussing?" be fetched as memory but not treated as a recall request.
-            "what we have discussed",
-            "what we discussed",
-            "we discussed",
-            "what we talked about",
-            "we talked about",
-            "remember discussing",
-            "we were discussing",
-            "about what we",
-            "earlier we",
-        ]
-
-        short_followup_markers = {
-            "continue", "go on", "tell me more", "yes continue", "yes, continue",
-            "yes explore", "explore", "complete it", "complete your sentence",
-            "yes acknowledge", "acknowledge", "elaborate",
-            "okay continue", "ok continue", "carry on",
-        }
-        short_followup_trigger = has_session_context and (
-            text in short_followup_markers
-            or any(text.startswith(m) for m in short_followup_markers)
-            or (word_count <= 4 and any(m in text for m in short_followup_markers))
+        return route(
+            user_input,
+            has_session_context=has_session_context,
+            references_past=references_past,
+            risk_hint=risk_hint,
         )
-        repair_trigger = has_session_context and any(
-            marker in text for marker in repair_markers
-        )
-        # Not gated by has_session_context — kept in sync with pages.py's
-        # equivalent check, which never gated this one either (only its
-        # short_followup_trigger requires session context). Found via the
-        # router-consistency test suite: this file required session context
-        # for these phrases to count as a recall request, pages.py did not,
-        # so the two routers disagreed specifically on a brand-new session's
-        # first message using recall phrasing.
-        same_session_recall_trigger = any(
-            pattern in text for pattern in same_session_recall_patterns
-        )
-
-        continuity_trigger = (
-            references_past
-            or any(marker in text for marker in continuity_markers)
-            or repair_trigger
-            or same_session_recall_trigger
-            or short_followup_trigger
-        )
-
-        if risk_hint == "high":
-            return {
-                "intent_label": "crisis",
-                "response_mode": "crisis_support",
-                "memory_needed": "full",
-                "memory_types": ["current_session", "previous_sessions", "long_term_memory"],
-                # Critical focus: NOW + BEFORE + WHAT_WORKS (no profile needed for immediate safety)
-                "escalation_flag": True,
-            }
-
-        if is_greeting and not continuity_trigger:
-            return {
-                "intent_label": "casual_greeting",
-                "response_mode": "casual_chat",
-                "memory_needed": "false",
-                "memory_types": [],
-                "escalation_flag": False,
-            }
-
-        if continuity_trigger:
-            return {
-                "intent_label": "continuity_followup",
-                "response_mode": "supportive_chat",
-                "memory_needed": "light",
-                "memory_types": ["onboarding_profile", "current_session", "previous_sessions"],
-                # For continuity: profile + current context + past sessions (user is referring to earlier conversation)
-                "escalation_flag": False,
-            }
-
-        if any(kw in text for kw in COPING_KEYWORDS):
-            return {
-                "intent_label": "coping_request",
-                "response_mode": "coping_suggestion",
-                "memory_needed": "light",
-                "memory_types": ["onboarding_profile", "current_session", "long_term_memory"],
-                # long_term_memory provides personalized coping strategies based on what worked before
-                "escalation_flag": False,
-            }
-
-        if any(kw in text for kw in EMOTIONAL_SUPPORT_KEYWORDS):
-            return {
-                "intent_label": "emotional_support",
-                "response_mode": "supportive_chat",
-                "memory_needed": "light",
-                "memory_types": ["onboarding_profile", "current_session", "long_term_memory"],
-                # Profile + current context + long_term_memory provides context for emotionally intelligent responses
-                "escalation_flag": False,
-            }
-
-        # NEW: Smart event vs emotional response distinction
-        has_event = any(marker in text for marker in EVENT_MARKERS)
-        has_emotion = any(word in text for word in EMOTION_WORDS)
-
-        if has_event and not has_emotion:
-            return {
-                "intent_label": "event_sharing",
-                "response_mode": "casual_chat",
-                "memory_needed": "false",  # Pure event = LLM handles it
-                "memory_types": [],
-                "escalation_flag": False,
-            }
-
-        if has_emotion:
-            return {
-                "intent_label": "emotional_response",
-                "response_mode": "supportive_chat",
-                "memory_needed": "light",  # Track emotional patterns
-                "memory_types": ["current_session", "long_term_memory"],
-                "escalation_flag": False,
-            }
-
-        # Default: general chat (LLM is capable alone)
-        return {
-            "intent_label": "general_chat",
-            "response_mode": "normal_chat",
-            "memory_needed": "false",  # LLM doesn't need memory for general chat
-            "memory_types": [],
-            "escalation_flag": False,
-        }
     ###### changes by SB end #######
 
     def _reply_has_question(self, reply):

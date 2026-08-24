@@ -429,77 +429,26 @@ def _filter_chunks_by_relevance(rag_chunks, similarity_threshold=0.65):
 
 def _detect_intent_from_prompt(prompt: str, has_session_context: bool = False) -> tuple:
     """
-    Intent detection matching exact engine.py logic.
-    Returns: (intent_label, memory_types)
+    Intent detection. Returns: (intent_label, memory_types)
 
-    OPTIMIZED: Only fetch memory that's NECESSARY:
-    - Onboarding profile removed (not needed for any case)
-    - Fetch only: current_session, long_term_memory, previous_sessions
-    - Smart event vs emotional distinction
+    Delegates intent classification to router_graph.route() — the same
+    LangGraph-based implementation engine.py::_route_message now uses, so
+    the two can no longer drift apart the way they did three times during
+    development. memory_types is still assembled here, not taken directly
+    from the graph: this function's memory_types has always deliberately
+    excluded "onboarding_profile" (a real, intentional difference from
+    engine.py's routing payload, not a bug — fetching it here was judged an
+    unnecessary database round trip for every message), so that exclusion
+    is preserved explicitly rather than silently erased by unifying the two
+    outputs completely.
     """
     if not prompt:
         return "general_chat", []
 
-    text = prompt.strip().lower()
-    word_count = len(text.split())
-
-    # Check greeting (exact match or from set)
-    is_greeting = text in _GREETING_KEYWORDS
-
-    # Check continuity markers
-    continuity_trigger = (
-        any(marker in text for marker in _CONTINUITY_MARKERS)
-        or any(pattern in text for pattern in _SAME_SESSION_RECALL_PATTERNS)
-    )
-
-    # Short followup (requires session context)
-    short_followup_trigger = has_session_context and (
-        text in _SHORT_FOLLOWUP_MARKERS
-        or any(text.startswith(m) for m in _SHORT_FOLLOWUP_MARKERS)
-        or (word_count <= 4 and any(m in text for m in _SHORT_FOLLOWUP_MARKERS))
-    )
-
-    if continuity_trigger or short_followup_trigger:
-        continuity_trigger = True
-
-    # Route based on exact engine.py logic
-    if is_greeting and not continuity_trigger:
-        intent = "casual_greeting"
-        memory_types = []  # No memory needed
-        return intent, memory_types
-
-    if continuity_trigger:
-        intent = "continuity_followup"
-        memory_types = ["current_session", "previous_sessions"]
-        return intent, memory_types
-
-    if any(kw in text for kw in _COPING_KEYWORDS):
-        intent = "coping_request"
-        memory_types = ["current_session", "long_term_memory"]
-        return intent, memory_types
-
-    if any(kw in text for kw in _EMOTIONAL_SUPPORT_KEYWORDS):
-        intent = "emotional_support"
-        memory_types = ["current_session", "long_term_memory"]
-        return intent, memory_types
-
-    # NEW: Smart event vs emotional response distinction
-    has_event = any(marker in text for marker in _EVENT_MARKERS)
-    has_emotion = any(word in text for word in _EMOTION_WORDS)
-
-    if has_event and not has_emotion:
-        intent = "event_sharing"
-        memory_types = []  # Pure event = LLM handles it
-        return intent, memory_types
-
-    if has_emotion:
-        intent = "emotional_response"
-        memory_types = ["current_session", "long_term_memory"]  # Track emotional patterns
-        return intent, memory_types
-
-    # Default: general chat (LLM is capable alone)
-    intent = "general_chat"
-    memory_types = []
+    from router_graph import route
+    result = route(prompt, has_session_context=has_session_context, references_past=False, risk_hint="low")
+    intent = result["intent_label"]
+    memory_types = [t for t in result["memory_types"] if t != "onboarding_profile"]
     return intent, memory_types
 
 
