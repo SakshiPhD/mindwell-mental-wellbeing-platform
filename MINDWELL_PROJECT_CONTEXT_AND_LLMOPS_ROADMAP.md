@@ -1132,20 +1132,21 @@ After implementation, report:
       (tracing.py), custom trace() spans around each agent call
       (engine.py::_call_agent), verified against the real account with
       synthetic data only
-- [x] Privacy/redaction policy defined for traces — narrower than a full
-      consent/retention policy (that's still open, see below), but the
-      concrete leak-prevention mechanism is done: a real leak was found
-      (LangChain's own ChatOllama/LangGraph auto-tracing bypassed the
-      custom span and uploaded full raw prompts/messages), root-caused to
+- [x] Privacy/redaction policy defined for traces — a real leak was found
+      (LangChain's own ChatOllama/LangGraph auto-tracing bypassed a custom
+      redacted span and uploaded full raw prompts/messages), root-caused to
       three independent default-client resolution paths, and fixed by
-      installing one Client(hide_inputs=True, hide_outputs=True) across
-      all three (tracing.py::_install_redacted_default_client). Verified
-      by pulling real trace content back from LangSmith before and after —
-      before: full system prompt + raw user message present; after: empty
-      inputs/outputs on every span including LangGraph nodes and ChatOllama
-      itself. Still open: real user conversations remain out of scope for
-      tracing until a full consent/retention policy exists — this only
-      makes the mechanism safe for if/when that happens.
+      installing one explicitly-constructed Client across all three
+      (tracing.py::_install_default_tracing_client). Verified by pulling
+      real trace content back from LangSmith before and after the fix.
+      2026-08-25: the project owner explicitly authorized tracing real
+      user_id=1 conversations (they're the sole account holder) with full
+      content, specifically so traces are useful for debugging quality —
+      not just timing. hide_inputs/hide_outputs default to off as a
+      result; the mechanism still supports turning them back on in one
+      place (tracing.py) if a second real user is ever added, since the
+      current consent basis is "owner tracing their own data," not a
+      general multi-user retention/consent policy.
 - [ ] Component latency and tokens recorded
 - [ ] Safety evaluation dataset created
 - [ ] Routing evaluation dataset created
@@ -1223,14 +1224,19 @@ Update this section after each milestone.
 ```text
 Current phase: Baseline stabilization complete. LangChain provider wrapper
   complete. LangGraph routing migration complete. LangSmith tracing complete
-  (development, synthetic-data-verified, redaction-fixed).
-Current code version: main, commit 4e1177a (LangSmith milestone commit to follow)
+  and now tracing the real user_id=1 account with full content (owner's own
+  explicit, dated authorization — see checklist above).
+Current code version: main, commit 6fde355
 Current approved configuration: Ollama via LangChain's ChatOllama; routing
   decisions via router_graph.py (LangGraph); per-agent generation settings
   unchanged from AGENT_CONFIG in llm_provider.py; tracing opt-in via
-  tracing.py, active only when a LangSmith key is configured, with a
-  process-wide redacting Client (hide_inputs/hide_outputs=True) installed
-  across all of LangSmith's/LangChain's default-client resolution paths
+  tracing.py, active only when a LangSmith key is configured, with one
+  process-wide Client installed across all of LangSmith's/LangChain's
+  default-client resolution paths (tracing.py::_install_default_tracing_client);
+  content redaction (hide_inputs/hide_outputs) is off by default as of
+  2026-08-25 by the owner's explicit choice, not left unimplemented — the
+  mechanism to turn it back on for any future non-owner user still exists
+  in that one function
 Latest evaluation dataset version: none formal yet, but router_graph.py's
   17-case battery (tests/test_router_graph.py) is a real, reusable regression
   set for routing correctness specifically — includes every routing bug found
