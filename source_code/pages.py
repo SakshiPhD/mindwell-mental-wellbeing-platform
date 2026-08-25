@@ -216,13 +216,21 @@ _EXTREME_CRISIS_KEYWORDS = {
     "it's over", "it's happening", "i'm doing this",
 
     # Finality/No Return
+    # "no more" and "completely done" removed - both real false positives
+    # ("there's no more milk", "completely done with this project") found by
+    # evaluations/safety_crisis_eval.py; "no more talking" and "i'm done"
+    # cover the genuine-finality signal without that generic collision.
     "this is my last", "last conversation", "won't respond after",
-    "i'm done", "completely done", "no more", "it's decided",
+    "i'm done", "it's decided",
     "no going back", "this is the end", "it's final", "final decision",
     "no more talking", "don't try to stop me", "won't be stopped",
 
     # Previous Attempts (HIGH RISK)
-    "already tried", "tried once", "previous attempt",
+    # "already tried" removed - real false positive ("I already tried the
+    # new restaurant") found by evaluations/safety_crisis_eval.py;
+    # "tried once"/"previous attempt"/"i know what works" etc. already
+    # cover the genuine signal without needing the bare generic phrase.
+    "tried once", "previous attempt",
     "i know what works", "i know how to", "second time", "try again",
 
     # Absolute Hopelessness
@@ -230,7 +238,11 @@ _EXTREME_CRISIS_KEYWORDS = {
     "beyond help", "no way out", "beyond saving",
 
     # Refusal of Help (combined with above)
-    "don't need help", "don't need steps", "don't want to talk",
+    # "don't need help" narrowed to "...anymore" - real false positive
+    # ("I don't need help with this assignment") found by
+    # evaluations/safety_crisis_eval.py; "anymore" is uncommon in ordinary
+    # refusals and much more specific to exhaustion/finality.
+    "i don't need help anymore", "don't need steps", "don't want to talk",
     "stop trying to help", "your words don't help"
 }
 
@@ -296,6 +308,28 @@ _SAME_SESSION_RECALL_PATTERNS = [
     "we were discussing", "about what we", "earlier we",
 ]
 
+# Negated-ability paraphrases of _HIGH_RISK_KEYWORDS phrases like "can't go
+# on" - found missed by evaluations/safety_crisis_eval.py: "I don't think I
+# can go on much longer" expresses the same hopelessness as "can't go on"
+# but negation-through-paraphrase ("don't think I can" instead of "can't")
+# evades plain substring matching, so these need regex instead.
+# The continuation verbs (esp. "go on") are also ordinary English for "go on
+# vacation/a trip/a diet" etc., so each pattern requires the phrase to end
+# the clause (duration/finality words, "like this", or clause-ending
+# punctuation/end-of-message) rather than be followed by a noun object -
+# without that, "I don't think I can go on vacation this year" would
+# falsely match too. Verified directly against both real and adversarial
+# benign phrasings, not just the one case that motivated this fix.
+_CONTINUATION_ENDING = r"(?:go on|continue|cope|keep going|do this|make it)(?:\s+(?:much longer|any longer|anymore|like this(?:\s+anymore)?))?\s*(?:[.,!?]|$)"
+_NEGATED_ABILITY_PATTERNS = [
+    (re.compile(r"don'?t think i can " + _CONTINUATION_ENDING),
+     "don't think i can go on (paraphrase)"),
+    (re.compile(r"not sure i can " + _CONTINUATION_ENDING),
+     "not sure i can go on (paraphrase)"),
+    (re.compile(r"don'?t know if i can " + _CONTINUATION_ENDING),
+     "don't know if i can go on (paraphrase)"),
+]
+
 _SHORT_FOLLOWUP_MARKERS = {
     "continue", "go on", "tell me more", "yes continue", "yes, continue",
     "yes explore", "explore", "complete it", "complete your sentence",
@@ -321,7 +355,8 @@ def _detect_extreme_crisis(prompt: str) -> tuple:
 
     # Check for extreme crisis keywords
     extreme_count = sum(1 for kw in _EXTREME_CRISIS_KEYWORDS if kw in text)
-    high_risk_count = sum(1 for kw in _HIGH_RISK_KEYWORDS if kw in text)
+    negated_ability_hits = [label for p, label in _NEGATED_ABILITY_PATTERNS if p.search(text)]
+    high_risk_count = sum(1 for kw in _HIGH_RISK_KEYWORDS if kw in text) + len(negated_ability_hits)
 
     # Extreme Crisis: 2+ extreme keywords (plan + means + timeline + finality)
     if extreme_count >= 2:
@@ -338,6 +373,7 @@ def _detect_extreme_crisis(prompt: str) -> tuple:
         for kw in _HIGH_RISK_KEYWORDS:
             if kw in text:
                 flagged.append(kw)
+        flagged.extend(negated_ability_hits)
         return False, "high", flagged[:5]
 
     # Medium Risk: 1+ high risk keyword
@@ -345,6 +381,7 @@ def _detect_extreme_crisis(prompt: str) -> tuple:
         for kw in _HIGH_RISK_KEYWORDS:
             if kw in text:
                 flagged.append(kw)
+        flagged.extend(negated_ability_hits)
         return False, "medium", flagged[:3]
 
     return False, "low", []
