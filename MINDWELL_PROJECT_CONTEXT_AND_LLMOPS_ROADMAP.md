@@ -1148,7 +1148,14 @@ After implementation, report:
       current consent basis is "owner tracing their own data," not a
       general multi-user retention/consent policy.
 - [ ] Component latency and tokens recorded
-- [ ] Safety evaluation dataset created
+- [x] Safety evaluation dataset created — evaluations/safety_crisis_eval.py,
+      a real LangSmith Dataset + Experiment (29 cases) for
+      pages.py::_detect_extreme_crisis, scoring crisis_recall and
+      false_positive_rate separately. First run found real bugs (not just
+      confirmed existing behavior): crisis_recall 92.9% (1 missed
+      negation-paraphrase case) and false_positive_rate 30.8% (4 overly
+      generic keywords). Both fixed and reverified at 100%/0%; 8 new
+      pytest regression tests lock the fixes in. Full suite: 93/93.
 - [ ] Routing evaluation dataset created
 - [ ] Memory evaluation dataset created
 - [ ] RAG evaluation dataset created
@@ -1225,8 +1232,10 @@ Update this section after each milestone.
 Current phase: Baseline stabilization complete. LangChain provider wrapper
   complete. LangGraph routing migration complete. LangSmith tracing complete
   and now tracing the real user_id=1 account with full content (owner's own
-  explicit, dated authorization — see checklist above).
-Current code version: main, commit 6fde355
+  explicit, dated authorization — see checklist above). First evaluation
+  dataset (safety/crisis-detection) complete, with 2 real bugs found and
+  fixed by the eval itself.
+Current code version: main, commit b8c7668
 Current approved configuration: Ollama via LangChain's ChatOllama; routing
   decisions via router_graph.py (LangGraph); per-agent generation settings
   unchanged from AGENT_CONFIG in llm_provider.py; tracing opt-in via
@@ -1237,10 +1246,12 @@ Current approved configuration: Ollama via LangChain's ChatOllama; routing
   2026-08-25 by the owner's explicit choice, not left unimplemented — the
   mechanism to turn it back on for any future non-owner user still exists
   in that one function
-Latest evaluation dataset version: none formal yet, but router_graph.py's
-  17-case battery (tests/test_router_graph.py) is a real, reusable regression
-  set for routing correctness specifically — includes every routing bug found
-  this session
+Latest evaluation dataset version: evaluations/safety_crisis_eval.py (29
+  cases, LangSmith Dataset "mindwell-safety-crisis-detection") for safety/
+  crisis detection — crisis_recall 100%, false_positive_rate 0% as of the
+  fixes in this milestone. router_graph.py's 17-case battery
+  (tests/test_router_graph.py) remains the reusable regression set for
+  routing correctness, still pytest-only rather than a LangSmith dataset
 Best quality results: no formal quality rubric/scoring implemented yet;
   verification so far is real-conversation testing + targeted regression tests
 Current P50/P95/P99 latency: not yet a real percentile dataset (samples too
@@ -1258,13 +1269,11 @@ Known failures:
     OpenAI/LangChain/FAISS stack that was never actually true — not yet corrected
 Current deployment status: local only. Ollama-only in practice — LangChain
   makes a second provider possible to add but none is wired up yet
-Next hypothesis/experiment: with tracing, routing, and provider wrapping all
-  now real (not hand-rolled), the next useful step is building actual
-  evaluation datasets (safety/routing/memory/RAG) on top of what LangSmith
-  now captures — right now there's a verified pipe for trace data but
-  nothing yet reading it for regression/quality signal. Real-conversation
-  tracing stays out of scope until a consent/retention policy is designed
-  (roadmap section 11).
+Next hypothesis/experiment: safety is done (100% recall, 0% false positive,
+  reverified). Routing, memory, and RAG still need their own LangSmith
+  evaluation datasets the same way — router_graph.py's pytest battery is
+  the natural starting point for a routing eval, since the cases already
+  exist and just need porting into the LangSmith Dataset/Experiment format.
 ```
 
 ---
