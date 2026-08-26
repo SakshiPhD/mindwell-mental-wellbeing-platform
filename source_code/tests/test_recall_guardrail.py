@@ -79,3 +79,34 @@ def test_real_health_example_from_production(engine):
     context = "User: i am stressed about my project deadline\nAssistant: That sounds stressful."
     topic = engine._find_unverified_recall_topic("did i ever tell you about my health?", context)
     assert topic == "health"
+
+
+def test_recall_question_without_about_still_triggers(engine):
+    """Found by evaluations/memory_guardrail_eval.py: every pattern required
+    the literal word 'about' - 'do you remember my X' (arguably the more
+    natural phrasing) slipped through completely unguarded."""
+    context = "User: hey today i am not feeling good.\nUser: do you remember my relocation?"
+    topic = engine._find_unverified_recall_topic("do you remember my relocation?", context)
+    assert topic == "relocation"
+
+
+def test_recall_question_without_about_and_topic_present_does_not_trigger(engine):
+    """The 'about'-optional fix must not start over-firing when the fact
+    genuinely was shared, just because 'about' is no longer required."""
+    context = "User: i relocated to qatar last year.\nUser: do you remember my relocation?"
+    topic = engine._find_unverified_recall_topic("do you remember my relocation?", context)
+    assert topic is None
+
+
+def test_generic_continuity_question_does_not_trigger():
+    """The fix must not catch generic backward-references ('what I told you
+    yesterday', 'what we discussed') as if they were a named topic to check -
+    those are the router's job (continuity_followup), not this guardrail's."""
+    engine = MultiAgentEngine()
+    for text in [
+        "do you remember what i told you yesterday?",
+        "do you remember what we discussed?",
+    ]:
+        context = f"User: i am stressed.\nUser: {text}"
+        topic = engine._find_unverified_recall_topic(text, context)
+        assert topic is None, f"{text!r} incorrectly matched as a named topic"

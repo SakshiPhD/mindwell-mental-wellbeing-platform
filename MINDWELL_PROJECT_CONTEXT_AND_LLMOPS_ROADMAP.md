@@ -1170,7 +1170,23 @@ After implementation, report:
       suite: 95/95. One gap deliberately left as documented, unscored scope:
       "I am not feeling well today." matches no keyword and falls through
       to general_chat — broader phrasing-coverage limitation, not a quick fix.
-- [ ] Memory evaluation dataset created
+- [x] Memory evaluation dataset created — two LangSmith Dataset + Experiments:
+      evaluations/memory_guardrail_eval.py (15 cases) for
+      engine.py::_find_unverified_recall_topic, and
+      evaluations/memory_relevance_eval.py (5 cases) for
+      engine.py::_build_relevant_memory_recall. Neither function had any
+      prior dedicated eval; the guardrail had pytest coverage but every
+      existing case used "...about X" phrasing. First runs found two real
+      bugs: the guardrail's regex required the literal word "about" (so
+      "do you remember my X" bypassed it entirely - guardrail_trigger_recall
+      would have been incomplete had the gap not been found and closed
+      before the first real run); and the relevance scorer's plain
+      substring matching let "work" match inside "working"
+      (distractor_leakage_rate 50%, same bug shape as the routing and
+      safety keyword fixes). Both fixed with word-boundary matching;
+      reverified at guardrail_trigger_recall 100%/false_trigger_rate 0%
+      and relevance_recall 100%/distractor_leakage_rate 0%. 7 new pytest
+      regression tests. Full suite: 102/102.
 - [ ] RAG evaluation dataset created
 - [ ] Response-quality rubric created
 - [ ] Latency benchmark created
@@ -1245,10 +1261,10 @@ Update this section after each milestone.
 Current phase: Baseline stabilization complete. LangChain provider wrapper
   complete. LangGraph routing migration complete. LangSmith tracing complete
   and now tracing the real user_id=1 account with full content (owner's own
-  explicit, dated authorization — see checklist above). Safety and routing
-  evaluation datasets both complete, each with real bugs found and fixed by
-  the eval itself. Memory and RAG evals still open.
-Current code version: main, commit d9fbb94 (routing-eval milestone commit to follow)
+  explicit, dated authorization — see checklist above). Safety, routing, and
+  memory evaluation datasets all complete, each with real bugs found and
+  fixed by the eval itself. RAG eval still open.
+Current code version: main, commit 3735dd2 (memory-eval milestone commit to follow)
 Current approved configuration: Ollama via LangChain's ChatOllama; routing
   decisions via router_graph.py (LangGraph); per-agent generation settings
   unchanged from AGENT_CONFIG in llm_provider.py; tracing opt-in via
@@ -1260,12 +1276,14 @@ Current approved configuration: Ollama via LangChain's ChatOllama; routing
   mechanism to turn it back on for any future non-owner user still exists
   in that one function
 Latest evaluation dataset version: evaluations/safety_crisis_eval.py (29
-  cases, LangSmith Dataset "mindwell-safety-crisis-detection") — crisis_recall
-  100%, false_positive_rate 0%. evaluations/routing_eval.py (28 cases,
-  LangSmith Dataset "mindwell-routing-classification") — accuracy 100%,
-  crisis_override_reliability 100%. Both eval scripts and their pytest
-  regression counterparts are the reusable, re-runnable check going forward,
-  not one-off scripts.
+  cases) — crisis_recall 100%, false_positive_rate 0%.
+  evaluations/routing_eval.py (28 cases) — accuracy 100%,
+  crisis_override_reliability 100%. evaluations/memory_guardrail_eval.py
+  (15 cases) — guardrail_trigger_recall 100%, guardrail_false_trigger_rate
+  0%. evaluations/memory_relevance_eval.py (5 cases) — relevance_recall
+  100%, distractor_leakage_rate 0%. All four eval scripts and their pytest
+  regression counterparts are the reusable, re-runnable check going
+  forward, not one-off scripts.
 Best quality results: no formal quality rubric/scoring implemented yet;
   verification so far is real-conversation testing + targeted regression tests
 Current P50/P95/P99 latency: not yet a real percentile dataset (samples too
@@ -1278,18 +1296,16 @@ Known failures:
     any]") into real replies — a prompt instruction was added but is not
     reliably followed by this model; not yet given a deterministic guardrail
     the way the memory-fabrication issue was
-  - No test/eval coverage yet for RAG retrieval quality
+  - No test/eval coverage yet for RAG retrieval quality (next eval milestone)
   - Setup docs (README, Setup_and_Run_Instructions.md) still describe an
     OpenAI/LangChain/FAISS stack that was never actually true — not yet corrected
 Current deployment status: local only. Ollama-only in practice — LangChain
   makes a second provider possible to add but none is wired up yet
-Next hypothesis/experiment: safety and routing are both done (100% on their
-  key metrics, reverified). Memory retrieval eval next, then RAG — each
-  needs its own dataset and its own metrics (not just reusing accuracy):
-  memory likely needs "did it recall the right stored fact / avoid
-  inventing one," RAG likely needs "did retrieval pull the right knowledge-
-  base document," both different shapes of correctness than routing's
-  single-label classification.
+Next hypothesis/experiment: safety, routing, and memory are all done (100%
+  on their key metrics, reverified). RAG eval is the last of the four
+  planned evaluation datasets — needs its own metric shape again: "did
+  retrieval pull the right knowledge-base document for this query," not
+  classification accuracy or recall-guardrail correctness.
 ```
 
 ---

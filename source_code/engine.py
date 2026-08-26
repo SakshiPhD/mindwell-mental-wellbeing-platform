@@ -102,6 +102,15 @@ RECALL_PROBE_TOPIC_PATTERNS = [
     re.compile(r"\b(?:did|have)\s+i\s+(?:ever\s+)?(?:tell|mention|told)\s+you\b.{0,20}?\babout\s+(?:my\s+)?([a-z][a-z \-']{2,40}?)[\?\.!]*$", re.IGNORECASE),
     re.compile(r"\byou\s+(?:remember|know)\b.{0,20}?\babout\s+(?:my\s+)?([a-z][a-z \-']{2,40}?)[\?\.!]*$", re.IGNORECASE),
     re.compile(r"\bwhat\s+([a-z][a-z \-']{2,40}?)\s+(?:have i|i have|did i|i did)\s+(?:shared|told|mentioned)\b", re.IGNORECASE),
+    # Found by evaluations/memory_guardrail_eval.py: every pattern above
+    # requires the literal word "about" ("do you remember about my X"), but
+    # "do you remember my X" - arguably the more natural phrasing - has no
+    # "about" at all and slipped past the guardrail entirely. Requiring "my"
+    # right after the verb (rather than an open-ended gap) keeps this from
+    # also matching generic continuity questions like "do you remember what
+    # I told you yesterday?", which aren't a named topic to check.
+    re.compile(r"\b(?:do|did|would)\s+you\s+(?:remember|know|recall)\s+my\s+([a-z][a-z \-']{2,40}?)[\?\.!]*$", re.IGNORECASE),
+    re.compile(r"\byou\s+(?:remember|know)\s+my\s+([a-z][a-z \-']{2,40}?)[\?\.!]*$", re.IGNORECASE),
 ]
 
 _HONEST_NO_RECALL_TEMPLATES = [
@@ -735,7 +744,18 @@ class MultiAgentEngine:
             facts = session.get("facts") or {}
             facts_blob = " ".join([f"{k} {v}" for k, v in self._flatten_facts(facts)])
             haystack = f"{summary} {tone} {facts_blob}".lower()
-            overlap = sum(1 for key in user_keywords if key in haystack)
+            # Word-boundary match, not plain substring: found by
+            # evaluations/memory_relevance_eval.py, "work" (from a
+            # work-stress query) matched inside "...time working." in an
+            # unrelated session's summary, pulling it in as a false
+            # distractor purely from the substring collision - same bug
+            # shape as router_graph.py::_keyword_hit and the safety
+            # keyword fixes. user_keywords are always single tokens (see
+            # _extract_keywords), so a plain \b...\b regex is enough here.
+            overlap = sum(
+                1 for key in user_keywords
+                if re.search(rf"\b{re.escape(key)}\b", haystack)
+            )
             recency_bonus = max(0, 3 - idx)
             score = (overlap * 3 + recency_bonus) if overlap > 0 else 0
             ranked.append((score, session))
