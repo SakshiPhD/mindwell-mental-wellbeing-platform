@@ -1221,7 +1221,28 @@ After implementation, report:
       2 new pytest regression tests plus a wiring-verification check in
       the eval script itself. Full suite: 103/103.
 - [ ] Response-quality rubric created
-- [ ] Latency benchmark created
+- [x] Latency benchmark created — evaluations/latency_benchmark.py, a
+      reusable script (not a one-off) running 5 representative message
+      types (greeting, coping_request, emotional_support,
+      continuity_followup, crisis) through the real pipeline, with a real
+      per-component breakdown: routing, memory fetch, RAG retrieval,
+      safety/memory/coach agent calls. Compared against the real
+      historical P50/P95/P99 already in chat_messages.latency_seconds
+      (47 real messages: P50=9.47s, P95=33.67s, P99=41.05s). Real
+      instrumentation added to production code (not benchmark-only):
+      database.py::fetch_selective_context returns _fetch_timing (total +
+      RAG-specific); engine.py::MultiAgentEngine tracks per-agent-call
+      timing, surfaced in run_care_pipeline's returned analysis["latency"].
+      Finding: Coach + Memory LLM calls account for 92% of total time;
+      memory fetch + RAG + routing + deterministic crisis lookup combined
+      are under 7% - directly answers "which agents, model calls, memory
+      operations, or RAG steps are causing the delay" (it's the LLM calls,
+      not memory/RAG). Traced the single largest outlier (coping_request,
+      94.6s) to a real, specific mechanism: the Coach agent's
+      hit-length-limit retry (llm_provider.py::AGENT_CONFIG, max_retries=1)
+      roughly doubled that call's latency and still didn't avoid
+      truncation. Full suite: 103/103 (instrumentation only, no behavior
+      change).
 
 ### Models, agents, memory, and RAG
 
@@ -1293,16 +1314,13 @@ Update this section after each milestone.
 Current phase: Baseline stabilization complete. LangChain provider wrapper
   complete. LangGraph routing migration complete. LangSmith tracing complete
   and now tracing the real user_id=1 account with full content (owner's own
-  explicit, dated authorization — see checklist above). All four planned
-  evaluation datasets (safety, routing, memory, RAG) now complete — the
-  evaluation-framework phase (roadmap phase 4) is essentially done. The RAG
-  threshold gap found in the first RAG-eval pass is now resolved: a
-  structural wiring bug (rag_documents never reached any reply) was fixed,
-  Crisis Resources now delivers deterministically for crisis intent, and
-  content improvements pushed every remaining borderline case above the
-  0.65 threshold — the owner deliberately kept the global threshold
-  unchanged, per real evidence gathered before deciding.
-Current code version: main, commit e47739e (RAG wiring/threshold milestone commit to follow)
+  explicit, dated authorization — see checklist above). Evaluation phase
+  CLOSED as of 2026-08-27 (all four datasets complete, RAG threshold gap
+  resolved via content improvement, two minor RAG gaps recorded in the
+  Backlog section below rather than fine-tuned further). Latency benchmark
+  now also complete — see below. Next: latency optimization using this
+  milestone's findings, then CI/CD and deployment readiness.
+Current code version: main, commit d22f5d5 (latency-benchmark milestone commit to follow)
 Current approved configuration: Ollama via LangChain's ChatOllama; routing
   decisions via router_graph.py (LangGraph); per-agent generation settings
   unchanged from AGENT_CONFIG in llm_provider.py; tracing opt-in via
@@ -1330,12 +1348,24 @@ Latest evaluation dataset version: evaluations/safety_crisis_eval.py (29
   the reusable, re-runnable check going forward, not one-off scripts.
 Best quality results: no formal quality rubric/scoring implemented yet;
   verification so far is real-conversation testing + targeted regression tests
-Current P50/P95/P99 latency: not yet a real percentile dataset (samples too
-  small). Representative single-sample timings from the LangChain migration
-  baseline: greeting (no LLM call) 0.00s, coping request ~16-18s, emotional
-  support ~6s, crisis-phrase classification ~7-9s. Routing/classification
-  itself is pure Python (no LLM call) and effectively instant either way.
+Current P50/P95/P99 latency: real percentile dataset now exists —
+  chat_messages.latency_seconds, 47 real messages: P50=9.47s, P95=33.67s,
+  P99=41.05s. Per-component breakdown (evaluations/latency_benchmark.py,
+  5 representative messages): Coach + Memory LLM calls = 92% of total
+  time; memory fetch + RAG + routing + deterministic crisis lookup
+  combined = under 7%. Worst observed case (coping_request, 94.6s)
+  exceeded the historical P99, traced to the Coach agent's
+  hit-length-limit retry roughly doubling that call's latency without
+  reliably avoiding truncation.
 Known failures:
+  - Coach agent's hit-length-limit retry (llm_provider.py::AGENT_CONFIG
+    "coach", max_retries=1) roughly doubles latency for long-answer
+    intents (coping_request especially) and, observed directly, can still
+    return a truncated reply even after the retry with more token budget.
+    Found by evaluations/latency_benchmark.py 2026-08-27; not yet fixed —
+    candidate approaches for the optimization milestone: raise
+    num_predict further, restructure the coping_request prompt to need
+    fewer tokens, or accept a longer single attempt instead of two
   - AI occasionally leaks raw template placeholder text (e.g. "[insert ... if
     any]") into real replies — a prompt instruction was added but is not
     reliably followed by this model; not yet given a deterministic guardrail
@@ -1354,15 +1384,11 @@ Known failures:
     OpenAI/LangChain/FAISS stack that was never actually true — not yet corrected
 Current deployment status: local only. Ollama-only in practice — LangChain
   makes a second provider possible to add but none is wired up yet
-Next hypothesis/experiment: all four planned evaluation datasets are done,
-  and the RAG threshold gap that was still open is now resolved with
-  evidence (content improvement, not a threshold change). Remaining open,
-  low-priority RAG gaps (grounding/derealization phrasing;
-  "plate"-as-idiom) are documented, not blocking. Roadmap's next unstarted
-  areas: response-quality rubric, latency benchmark, or moving into
-  phases 5+ (multi-provider, routing/memory/RAG optimization,
-  performance, CI/CD) — see the phase-by-phase status table shared with
-  the owner on 2026-08-26 for relative effort per phase.
+Next hypothesis/experiment: latency benchmark is done and points at a
+  clear, real target — Coach/Memory LLM call time (92% of total), and
+  specifically the Coach retry-doubling behavior on long-answer intents.
+  Next milestone per the owner's stated plan (2026-08-27): latency
+  optimization using these findings, then CI/CD and deployment readiness.
 ```
 
 ---

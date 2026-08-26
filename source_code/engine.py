@@ -431,6 +431,12 @@ class MultiAgentEngine:
         self.message_count = 0
         self.ask_question_cooldown = 0
         self._session_buffer = []
+        # Per-agent-call elapsed seconds from the most recent
+        # run_care_pipeline() call, keyed by agent name. Read by
+        # evaluations/latency_benchmark.py; not used elsewhere. Reset at
+        # the start of each run_care_pipeline() call, not accumulated
+        # across turns.
+        self._agent_timings = {}
         if st is not None:
             self.message_count = int(st.session_state.get("_engine_msg_count", 0))
             self.ask_question_cooldown = int(st.session_state.get("_engine_q_cooldown", 0))
@@ -953,6 +959,7 @@ class MultiAgentEngine:
                 elapsed = time.time() - start_time
                 run.end(outputs={"response_len": len(response or ""), "elapsed_s": round(elapsed, 3)})
 
+            self._agent_timings[agent_name] = round(elapsed, 3)
             preview = "empty"
             if response:
                 preview = response[:100].encode("ascii", "ignore").decode("ascii")
@@ -963,6 +970,7 @@ class MultiAgentEngine:
             return response
         except Exception as exc:
             elapsed = time.time() - start_time
+            self._agent_timings[agent_name] = round(elapsed, 3)
             logger.error("Agent '%s' FAILED after %.2fs with error: %s", agent_name, elapsed, exc, exc_info=True)
             return None
 
@@ -1068,6 +1076,7 @@ class MultiAgentEngine:
     def run_care_pipeline(self, user_input, memory_data=None, user_name=None):
         import time
         pipeline_start = time.time()
+        self._agent_timings = {}
         self.message_count += 1
         memory_data = memory_data or {}
         user_text = (user_input or "").strip()
@@ -1120,11 +1129,13 @@ class MultiAgentEngine:
         ) and not references_past
 
         # Lightweight orchestrator routing decision BEFORE memory-heavy use
+        _routing_start = time.time()
         route_decision = self._route_message(
             user_text,
             references_past=references_past,
             risk_hint="medium" if needs_safety else "low"
         )
+        self._agent_timings["_routing"] = round(time.time() - _routing_start, 3)
 
         ####### changes by SB end #######
 
@@ -1802,5 +1813,13 @@ class MultiAgentEngine:
             "escalation_flag": bool(route_decision["escalation_flag"]),
             "final_reply_agent": "fallback" if is_fallback else "coach",
             "fallback_triggered": is_fallback,
+
+            # Read by evaluations/latency_benchmark.py. agent_s is a copy,
+            # not a reference, so later pipeline calls on the same engine
+            # instance can't retroactively mutate a previous call's result.
+            "latency": {
+                "pipeline_s": round(pipeline_elapsed, 3),
+                "agent_s": dict(self._agent_timings),
+            },
         }
         return final_response, "Multi-Agent", analysis_data

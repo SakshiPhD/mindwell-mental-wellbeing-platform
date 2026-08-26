@@ -2578,9 +2578,11 @@ def fetch_selective_context(user_id, session_id, memory_types, neg_words=None, q
                 except Exception as e:
                     logger.warning("onboarding_profile fetch failed: %s", e)
 
+            rag_elapsed = 0.0
             if "rag_documents" in memory_types and query_text:
                 """Fetch knowledge base chunks relevant to query"""
                 if query_text and _should_use_rag(query_text):
+                    rag_start = time.time()
                     try:
                         from rag import (
                             retrieve_relevant_chunks_with_metadata,
@@ -2610,6 +2612,8 @@ def fetch_selective_context(user_id, session_id, memory_types, neg_words=None, q
                             memory_data["rag_context"] = rag_chunks
                     except Exception as e:
                         logger.warning("rag_documents fetch failed: %s", e)
+                    finally:
+                        rag_elapsed = time.time() - rag_start
 
             if "previous_sessions" in memory_types:
                 """Fetch actual session summaries from previous sessions with tone, facts, and date"""
@@ -2651,6 +2655,14 @@ def fetch_selective_context(user_id, session_id, memory_types, neg_words=None, q
                 "Selective memory fetch (%.2fs): types=[%s] | got_keys=%s",
                 fetch_elapsed, ", ".join(memory_types), list(memory_data.keys())
             )
+            # Timing breakdown for evaluations/latency_benchmark.py - not
+            # part of the LLM-facing context (nothing in engine.py's prompt
+            # assembly reads memory_data generically, only specific known
+            # keys, so this is safe to include unconditionally).
+            memory_data["_fetch_timing"] = {
+                "total_s": round(fetch_elapsed, 3),
+                "rag_s": round(rag_elapsed, 3),
+            }
             return memory_data
 
         finally:
