@@ -95,6 +95,17 @@ Recognizing which distortion is active is the first step to challenging it.
     {
         "source": "CBT Techniques",
         "content": """
+If thoughts like "I keep thinking I'm a failure," "I feel like such a
+failure," "why do I always think the worst about myself," or "I can't stop
+these negative thoughts" sound familiar, you're describing what CBT calls a
+cognitive distortion — a thinking pattern that feels true but distorts
+reality. Naming the pattern (see Common Cognitive Distortions) is the first
+step; a thought record is the tool for actually challenging it.
+        """.strip()
+    },
+    {
+        "source": "CBT Techniques",
+        "content": """
 Behavioral Activation is a CBT technique for depression and low mood.
 Depression causes withdrawal from activities, which worsens mood further —
 creating a cycle. Behavioral Activation breaks this cycle by scheduling
@@ -389,6 +400,17 @@ Healthy coping strategies address the emotion and support recovery:
     {
         "source": "Coping Strategies",
         "content": """
+If you're thinking "I keep using bad habits to deal with my problems, what
+should I do instead," or "my coping mechanisms aren't working anymore," or
+"I don't know what else to do besides [drinking / avoiding / scrolling],"
+that's a sign it's worth swapping an unhealthy coping strategy for a
+healthy one (see Healthy vs. Unhealthy Coping Strategies) rather than a
+sign anything is wrong with you for coping the way you have been.
+        """.strip()
+    },
+    {
+        "source": "Coping Strategies",
+        "content": """
 The TIPP Skills (DBT technique for intense emotions):
 
 When emotions feel out of control, TIPP helps regulate quickly:
@@ -514,6 +536,12 @@ This provides perspective without dismissing the current feeling.
         "content": """
 Understanding Depression:
 
+People experiencing depression often describe it in their own words rather
+than clinical terms: "I feel hopeless and empty," "nothing brings me joy
+anymore," "I don't see the point in anything," "I just feel numb all the
+time," or "I'm so tired of feeling this way." If any of that sounds like
+you, what you're describing has a name, and it responds to support.
+
 Depression is more than feeling sad. It is a persistent state that affects:
 - Mood (persistent sadness, emptiness, irritability)
 - Energy (fatigue, feeling slowed down)
@@ -529,6 +557,17 @@ symptoms of the illness — not facts about reality.
 Recovery is possible. Most people with depression recover with appropriate support,
 whether that is therapy, medication, lifestyle changes, or a combination.
 Reaching out for help is a sign of strength, not weakness.
+        """.strip()
+    },
+    {
+        "source": "Depression and Low Mood",
+        "content": """
+"I just feel numb all the time and don't care about anything anymore" is
+one of the most common ways people describe depression - not sadness
+exactly, but a flatness where things that used to matter stop registering.
+Emotional numbness and loss of interest (anhedonia) are core depression
+symptoms, not a sign that you've stopped caring as a person. It's one of
+the most treatable parts of depression to respond to support.
         """.strip()
     },
     {
@@ -586,6 +625,11 @@ How to interrupt rumination:
         "content": """
 If you are having thoughts of suicide or self-harm, please reach out immediately.
 You do not have to face this alone. Help is available.
+
+You might be thinking things like "I don't want to live anymore," "I am
+thinking about ending my life," "I can't do this anymore," "I want it all
+to stop," or "everyone would be better off without me." If any of that is
+what you're feeling right now, please keep reading and reach out immediately.
 
 International crisis helplines:
 - International Association for Suicide Prevention: https://www.iasp.info/resources/Crisis_Centres/

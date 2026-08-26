@@ -430,38 +430,12 @@ def _get_rag_top_k(intent: str, user_message: str) -> int:
     return 100  # Fetch up to 100, keep only those >= similarity threshold
 
 
-def _filter_chunks_by_relevance(rag_chunks, similarity_threshold=0.65):
-    """
-    Filter retrieved chunks to keep only highly relevant ones.
-
-    Returns only chunks with similarity_score >= threshold.
-    This way: 2 chunks with 0.8+ score are better than 8 chunks with 0.4 score.
-
-    Args:
-        rag_chunks: List of chunk metadata dicts with 'similarity_score'
-        similarity_threshold: Minimum relevance score (0.0-1.0)
-
-    Returns:
-        Filtered list of relevant chunks, sorted by score (descending)
-    """
-    if not rag_chunks:
-        return []
-
-    # Filter by threshold
-    relevant = [
-        chunk for chunk in rag_chunks
-        if chunk.get("similarity_score", 0) >= similarity_threshold
-    ]
-
-    # Sort by score (highest first)
-    relevant.sort(key=lambda x: x.get("similarity_score", 0), reverse=True)
-
-    logger.debug(
-        f"Chunk filtering: {len(rag_chunks)} retrieved → "
-        f"{len(relevant)} relevant (threshold >= {similarity_threshold})"
-    )
-
-    return relevant
+# _filter_chunks_by_relevance moved to rag.py::filter_chunks_by_relevance so
+# both this analytics-tracking path and the actual prompt-injection path in
+# database.py use the same function and threshold, not two copies that can
+# drift apart the way COPING_KEYWORDS/CONTINUITY_MARKERS/_should_use_rag did
+# elsewhere in this codebase before being consolidated.
+from rag import filter_chunks_by_relevance as _filter_chunks_by_relevance
 
 
 def _detect_intent_from_prompt(prompt: str, has_session_context: bool = False) -> tuple:
@@ -2563,9 +2537,12 @@ def show_chatbot():
                 # - current_session: understand what they just said RIGHT NOW
                 # - previous_sessions: understand how they got through crises BEFORE
                 # - long_term_memory: understand what coping strategies WORKED for them
+                # - rag_documents: so retrieved Crisis Resources content actually reaches
+                #   the Coach's prompt - this early-detection path bypasses router_graph.py,
+                #   so it needs the same "rag_documents" addition made there separately.
                 if crisis_risk_level in ("high", "extreme") or is_extreme_crisis:
                     detected_intent = "crisis"
-                    required_memory = ["current_session", "previous_sessions", "long_term_memory"]
+                    required_memory = ["current_session", "previous_sessions", "long_term_memory", "rag_documents"]
                     risk_label = "🚨 EXTREME CRISIS" if is_extreme_crisis else "⚠️ HIGH RISK CRISIS"
                 needs_rag_for_intent = _get_rag_needed_for_intent(detected_intent)
                 # Convert memory_types list to string for database storage
@@ -2582,6 +2559,22 @@ def show_chatbot():
                 else:
                     mem = {}
 
+                # Crisis Resources must always reach the prompt, not depend on
+                # embedding similarity clearing the 0.65 threshold - found by
+                # evaluations/rag_eval.py that genuine crisis messages can
+                # score right at that boundary (0.646) and get silently
+                # dropped. Deterministic fetch by category, prepended ahead
+                # of whatever similarity-based retrieval already found so it
+                # can never be crowded out, deduped so it's never repeated.
+                if detected_intent == "crisis":
+                    try:
+                        from rag import get_crisis_resources
+                        crisis_chunks = get_crisis_resources()
+                        existing = mem.get("rag_context") or []
+                        mem["rag_context"] = crisis_chunks + [c for c in existing if c not in crisis_chunks]
+                    except Exception as e:
+                        logger.warning("get_crisis_resources failed: %s", e)
+
                 # custom changes start
                 rag_used = mem.get("rag_context") or []
                 rag_metadata_for_db = []  # NEW: Track RAG chunks for database
@@ -2590,18 +2583,17 @@ def show_chatbot():
                 # Only retrieve RAG if: (1) intent requires it AND (2) query has content
                 if needs_rag_for_intent and _rag_query and _should_use_rag(_rag_query):
                     try:
-                        from rag import retrieve_relevant_chunks_with_metadata
+                        from rag import retrieve_relevant_chunks_with_metadata, RELEVANCE_THRESHOLD
                         # Fetch all available chunks
                         top_k = _get_rag_top_k(detected_intent, prompt)
                         _, rag_metadata_all = retrieve_relevant_chunks_with_metadata(user_id, _rag_query, top_k=top_k)
 
-                        # FILTER BY SIMILARITY: Keep chunks where meaning matches user query (>= 0.65 similarity)
+                        # FILTER BY SIMILARITY: Keep chunks where meaning matches user query
                         # Result count depends ONLY on relevance, not on intent or message length
                         # If 1 chunk is 0.80 similar → use 1
-                        # If 15 chunks are 0.65+ similar → use all 15
+                        # If 15 chunks are threshold+ similar → use all 15
                         # Accuracy > chunk count
-                        similarity_threshold = 0.65
-                        rag_metadata_for_db = _filter_chunks_by_relevance(rag_metadata_all, similarity_threshold)
+                        rag_metadata_for_db = _filter_chunks_by_relevance(rag_metadata_all, RELEVANCE_THRESHOLD)
 
                         if rag_metadata_for_db:
                             actual_count = len(rag_metadata_for_db)

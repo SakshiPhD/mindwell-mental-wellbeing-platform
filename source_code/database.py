@@ -2582,10 +2582,30 @@ def fetch_selective_context(user_id, session_id, memory_types, neg_words=None, q
                 """Fetch knowledge base chunks relevant to query"""
                 if query_text and _should_use_rag(query_text):
                     try:
-                        from rag import retrieve_relevant_chunks, reformulate_query
+                        from rag import (
+                            retrieve_relevant_chunks_with_metadata,
+                            filter_chunks_by_relevance,
+                            reformulate_query,
+                        )
                         search_query = reformulate_query(query_text)
                         logger.info("RAG search: %s", search_query)
-                        rag_chunks = retrieve_relevant_chunks(user_id, search_query, top_k=3)
+                        # Use the metadata+threshold path, not the bare
+                        # top-k nearest-neighbor one: this is the function
+                        # that actually reaches the Coach's prompt (see
+                        # engine.py::_call_agent's common_parts assembly),
+                        # so it needs the same relevance bar as the
+                        # analytics-tracking path in pages.py, not an
+                        # unfiltered top-3 regardless of how weak the
+                        # match is. Found missing by evaluations/rag_eval.py.
+                        full_chunks, rag_metadata = retrieve_relevant_chunks_with_metadata(
+                            user_id, search_query, top_k=10
+                        )
+                        # metadata's chunk_text is truncated to 500 chars for
+                        # DB-storage display - use the untruncated full_chunks
+                        # (same order) for what actually reaches the prompt.
+                        by_doc_id = {c["doc_id"]: full_chunks[i] for i, c in enumerate(rag_metadata)}
+                        relevant = filter_chunks_by_relevance(rag_metadata)
+                        rag_chunks = [by_doc_id[c["doc_id"]] for c in relevant[:3]]
                         if rag_chunks:
                             memory_data["rag_context"] = rag_chunks
                     except Exception as e:

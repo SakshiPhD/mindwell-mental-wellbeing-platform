@@ -31,6 +31,16 @@ EMBED_MODEL     = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 EMBED_DIM       = 768   # nomic-embed-text output dimension
 EMBED_TIMEOUT   = 15    # seconds — embedding is fast, 15s is generous
 
+# Minimum cosine similarity for a retrieved chunk to be considered relevant
+# enough to use. Single source of truth: this used to be a second copy
+# hardcoded in pages.py (_filter_chunks_by_relevance), used only for
+# analytics tracking - never the same value on purpose, just drift waiting
+# to happen the same way COPING_KEYWORDS/CONTINUITY_MARKERS/_should_use_rag
+# drifted apart elsewhere in this codebase. Now the one place that decides
+# what counts as relevant, for both the analytics path and the actual
+# prompt-injection path (database.py::fetch_selective_context).
+RELEVANCE_THRESHOLD = 0.65
+
 # Dedup cache: avoids re-embedding identical content within a process lifetime
 _ingest_seen: set = set()
 _ingest_seen_lock = threading.Lock()
@@ -237,6 +247,47 @@ def ingest_to_rag_async(user_id: int, content: str, source: str,
 
 # ===================== RETRIEVAL =====================
 
+def get_crisis_resources(limit: int = 2) -> List[str]:
+    """
+    Deterministically fetch curated Crisis Resources content by category
+    label - no embedding, no similarity threshold, can never silently
+    return nothing just because a message didn't phrase itself close enough
+    to how the chunk was worded.
+
+    Added because evaluations/rag_eval.py found that embedding-similarity
+    retrieval alone put genuine crisis messages (e.g. "I am thinking about
+    ending my life") right at 0.646, just under the 0.65 relevance bar -
+    meaning this exact content could be silently dropped for the messages
+    that need it most. Crisis content is safety-critical and small in
+    volume (3 curated chunks); it doesn't need semantic search to find it,
+    it needs to always be there. This is called directly from the crisis
+    path (pages.py), not as part of the normal similarity-based retrieval.
+    """
+    from database import get_pooled_connection
+
+    with get_pooled_connection() as conn:
+        if not conn:
+            return []
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                SELECT content
+                FROM   rag_documents
+                WHERE  source = 'Crisis Resources' AND user_id IS NULL
+                ORDER  BY doc_id ASC
+                LIMIT  %s
+                """,
+                (limit,),
+            )
+            return [r[0] for r in cur.fetchall() if r[0]]
+        except Exception as e:
+            logger.warning("get_crisis_resources error: %s", e)
+            return []
+        finally:
+            cur.close()
+
+
 def retrieve_relevant_chunks(user_id: int, query: str,
                              top_k: int = 3) -> List[str]:
     """
@@ -365,3 +416,29 @@ def retrieve_relevant_chunks_with_metadata(user_id: int, query: str,
             return [], []
         finally:
             cur.close()
+
+
+def filter_chunks_by_relevance(rag_chunks, similarity_threshold: float = RELEVANCE_THRESHOLD):
+    """
+    Filter retrieved chunks (from retrieve_relevant_chunks_with_metadata) to
+    keep only ones meeting the relevance bar. Moved here from
+    pages.py::_filter_chunks_by_relevance so both the analytics-tracking
+    path and the actual prompt-injection path (database.py) use the exact
+    same function and threshold, not two independently-maintained copies.
+
+    Returns chunks sorted by score (highest first).
+    """
+    if not rag_chunks:
+        return []
+
+    relevant = [
+        chunk for chunk in rag_chunks
+        if chunk.get("similarity_score", 0) >= similarity_threshold
+    ]
+    relevant.sort(key=lambda x: x.get("similarity_score", 0), reverse=True)
+
+    logger.debug(
+        "Chunk filtering: %d retrieved -> %d relevant (threshold >= %s)",
+        len(rag_chunks), len(relevant), similarity_threshold,
+    )
+    return relevant

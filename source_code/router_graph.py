@@ -147,7 +147,14 @@ def _set_crisis(state: RouterState) -> RouterState:
         intent_label="crisis",
         response_mode="crisis_support",
         memory_needed="full",
-        memory_types=["current_session", "previous_sessions", "long_term_memory"],
+        # "rag_documents" added here: this is what actually makes
+        # retrieved knowledge-base content (e.g. Crisis Resources) reach
+        # the Coach's prompt via database.py::fetch_selective_context.
+        # Before this fix, no intent's memory_types ever included
+        # "rag_documents", so RAG retrieval was computed (and logged for
+        # analytics) but never actually influenced a reply - found by
+        # evaluations/rag_eval.py.
+        memory_types=["current_session", "previous_sessions", "long_term_memory", "rag_documents"],
         escalation_flag=True,
     )
     return state
@@ -180,7 +187,8 @@ def _set_coping(state: RouterState) -> RouterState:
         intent_label="coping_request",
         response_mode="coping_suggestion",
         memory_needed="light",
-        memory_types=["onboarding_profile", "current_session", "long_term_memory"],
+        # "rag_documents" added - see the comment in _set_crisis above for why.
+        memory_types=["onboarding_profile", "current_session", "long_term_memory", "rag_documents"],
         escalation_flag=False,
     )
     return state

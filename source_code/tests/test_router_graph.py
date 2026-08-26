@@ -100,3 +100,21 @@ def test_genuine_help_request_still_routes_to_coping():
         assert graph_route["intent_label"] == "coping_request", (
             f"{message!r} -> {graph_route['intent_label']!r}"
         )
+
+
+def test_crisis_and_coping_request_include_rag_documents_in_memory_types():
+    """Found while acting on evaluations/rag_eval.py's findings: no intent's
+    memory_types ever included "rag_documents", so retrieved knowledge-base
+    content (computed via rag.py::retrieve_relevant_chunks_with_metadata)
+    was never actually passed to database.py::fetch_selective_context's RAG
+    branch - it only ever reached analytics tracking, never a real reply.
+    Only crisis and coping_request need this (see
+    pages.py::_get_rag_needed_for_intent's own intent-to-RAG-need mapping)."""
+    crisis_route = route("I dont want to live anymore", risk_hint="high")
+    assert "rag_documents" in crisis_route["memory_types"]
+
+    coping_route = route("what are some healthy ways to cope with stress", risk_hint="low")
+    assert "rag_documents" in coping_route["memory_types"]
+
+    greeting_route = route("hi", risk_hint="low")
+    assert "rag_documents" not in greeting_route["memory_types"]

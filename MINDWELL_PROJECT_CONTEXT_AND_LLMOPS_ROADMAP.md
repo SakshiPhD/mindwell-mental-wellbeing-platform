@@ -1197,14 +1197,29 @@ After implementation, report:
       false "failures" where a legitimately relevant PDF chunk outscored
       the curated category chunk for the same topic - verified by reading
       the actual chunk content, then switched to a per-query set of
-      verified-acceptable sources. top1_source_accuracy 100% (11/11),
-      distractor_rejection 100% (1/1). production_threshold_pass_rate
-      82% (9/11) - a real, unresolved finding, not yet fixed: two correct
-      matches (Crisis Resources, Depression and Low Mood) score 0.646,
-      just under the production 0.65 cutoff in
-      pages.py::_filter_chunks_by_relevance, so that content is currently
-      silently dropped. Deliberately left open pending a threshold/content
-      tuning decision rather than a quick fix - see Known failures below.
+      verified-acceptable sources. Follow-up round (2026-08-26, owner
+      decision): keep the global threshold at 0.65 - the owner declined to
+      lower it off 11 cases alone, since a real check of positions 2-3
+      across several queries showed lowering it would dilute focus with
+      generic PDF content across every category, not fix anything
+      targeted. Instead: (1) fixed a structural bug bigger than the
+      threshold question - "rag_documents" was never in any intent's
+      memory_types, so retrieved content was computed and logged but
+      never reached a reply, for ANY intent, regardless of similarity
+      score (router_graph.py, pages.py); (2) added deterministic Crisis
+      Resources delivery (rag.py::get_crisis_resources) for crisis intent,
+      independent of similarity entirely, per the owner's explicit
+      request; (3) improved Crisis/Depression/CBT/Coping chunk content
+      with natural user phrasing (knowledge_base.py, re-ingested) - 5
+      borderline queries moved from 0.627-0.646 to 0.679-0.791, all now
+      above threshold; (4) expanded the dataset 13 -> 25 cases and built
+      reusable threshold-comparison tooling (rag_eval.py::compare_thresholds)
+      used to support the decision, not used to change it unilaterally.
+      Final: top1_source_accuracy 100% (19/19), distractor_rejection 100%
+      (3/3), production_threshold_pass_rate 100% (19/19, up from 82%) -
+      achieved entirely through content improvement, threshold untouched.
+      2 new pytest regression tests plus a wiring-verification check in
+      the eval script itself. Full suite: 103/103.
 - [ ] Response-quality rubric created
 - [ ] Latency benchmark created
 
@@ -1280,13 +1295,14 @@ Current phase: Baseline stabilization complete. LangChain provider wrapper
   and now tracing the real user_id=1 account with full content (owner's own
   explicit, dated authorization — see checklist above). All four planned
   evaluation datasets (safety, routing, memory, RAG) now complete — the
-  evaluation-framework phase (roadmap phase 4) is essentially done. Safety,
-  routing, and memory each had a real bug found and fixed by the eval
-  itself. RAG's eval found a real gap (production_threshold_pass_rate 82%)
-  that's deliberately NOT yet fixed — a threshold/content tuning decision
-  the owner wants to make separately, not a quick keyword fix like the
-  other three.
-Current code version: main, commit 64e49da (RAG-eval milestone commit to follow)
+  evaluation-framework phase (roadmap phase 4) is essentially done. The RAG
+  threshold gap found in the first RAG-eval pass is now resolved: a
+  structural wiring bug (rag_documents never reached any reply) was fixed,
+  Crisis Resources now delivers deterministically for crisis intent, and
+  content improvements pushed every remaining borderline case above the
+  0.65 threshold — the owner deliberately kept the global threshold
+  unchanged, per real evidence gathered before deciding.
+Current code version: main, commit e47739e (RAG wiring/threshold milestone commit to follow)
 Current approved configuration: Ollama via LangChain's ChatOllama; routing
   decisions via router_graph.py (LangGraph); per-agent generation settings
   unchanged from AGENT_CONFIG in llm_provider.py; tracing opt-in via
@@ -1303,12 +1319,15 @@ Latest evaluation dataset version: evaluations/safety_crisis_eval.py (29
   crisis_override_reliability 100%. evaluations/memory_guardrail_eval.py
   (15 cases) — guardrail_trigger_recall 100%, guardrail_false_trigger_rate
   0%. evaluations/memory_relevance_eval.py (5 cases) — relevance_recall
-  100%, distractor_leakage_rate 0%. evaluations/rag_eval.py (13 cases) —
-  top1_source_accuracy 100%, distractor_rejection 100%,
-  production_threshold_pass_rate 82% (open finding, see Known failures).
-  All five eval scripts and their pytest regression counterparts (where a
-  code fix exists) are the reusable, re-runnable check going forward, not
-  one-off scripts.
+  100%, distractor_leakage_rate 0%. evaluations/rag_eval.py (25 cases,
+  expanded from 13) — top1_source_accuracy 100%, distractor_rejection
+  100%, production_threshold_pass_rate 100% (up from 82% in the first
+  pass, via content improvement, not a threshold change). Also includes
+  rag_eval.py::compare_thresholds() (reusable threshold-comparison
+  tooling) and verify_wiring() (checks rag_documents wiring +
+  get_crisis_resources() don't silently regress). All five eval scripts
+  and their pytest regression counterparts (where a code fix exists) are
+  the reusable, re-runnable check going forward, not one-off scripts.
 Best quality results: no formal quality rubric/scoring implemented yet;
   verification so far is real-conversation testing + targeted regression tests
 Current P50/P95/P99 latency: not yet a real percentile dataset (samples too
@@ -1321,22 +1340,26 @@ Known failures:
     any]") into real replies — a prompt instruction was added but is not
     reliably followed by this model; not yet given a deterministic guardrail
     the way the memory-fabrication issue was
-  - RAG: two correct retrievals (Crisis Resources; Depression and Low Mood)
-    score 0.646, just under pages.py::_filter_chunks_by_relevance's 0.65
-    production threshold — that content is silently dropped in the real
-    app even though retrieval found the right thing. Found by
-    evaluations/rag_eval.py; not yet fixed — needs a threshold/content
-    tuning decision (lower the global threshold vs. improve chunk content
-    vs. a category-specific threshold), not a quick keyword fix
+  - RAG threshold gap (resolved 2026-08-26 — see phase notes above; kept
+    here as a record, not an open item): was two correct retrievals
+    scoring 0.646, just under threshold. Also worth remembering: two
+    documented, still-open gaps found while expanding the eval dataset,
+    out of this round's Crisis/Depression/CBT/Coping scope —
+    "everything feels unreal and far away" (derealization/grounding
+    phrasing not well covered) and "I have too much on my plate" (the
+    idiom gets misread literally, matching diet/food content) — both
+    tracked as KNOWN_GAP_CASE in evaluations/rag_eval.py, not scored
+    against top1_source_accuracy, not yet fixed
   - Setup docs (README, Setup_and_Run_Instructions.md) still describe an
     OpenAI/LangChain/FAISS stack that was never actually true — not yet corrected
 Current deployment status: local only. Ollama-only in practice — LangChain
   makes a second provider possible to add but none is wired up yet
-Next hypothesis/experiment: all four planned evaluation datasets are done.
-  Two threads open: (1) decide and implement a fix for the RAG
-  production_threshold_pass_rate gap (owner wants to decide the approach
-  before implementing), and (2) the roadmap's next unstarted areas are
-  response-quality rubric, latency benchmark, or moving into
+Next hypothesis/experiment: all four planned evaluation datasets are done,
+  and the RAG threshold gap that was still open is now resolved with
+  evidence (content improvement, not a threshold change). Remaining open,
+  low-priority RAG gaps (grounding/derealization phrasing;
+  "plate"-as-idiom) are documented, not blocking. Roadmap's next unstarted
+  areas: response-quality rubric, latency benchmark, or moving into
   phases 5+ (multi-provider, routing/memory/RAG optimization,
   performance, CI/CD) — see the phase-by-phase status table shared with
   the owner on 2026-08-26 for relative effort per phase.
