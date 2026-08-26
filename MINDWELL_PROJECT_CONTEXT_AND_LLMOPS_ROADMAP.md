@@ -1367,6 +1367,47 @@ Next hypothesis/experiment: all four planned evaluation datasets are done,
 
 ---
 
+## 32.1 Backlog (Deferred, Non-Blocking)
+
+Items found during eval-building work, deliberately not fixed, tracked
+here so they aren't lost or rediscovered from scratch later. The
+evaluation phase is closed as of 2026-08-27 — none of these are being
+actively worked; they wait until explicitly picked up.
+
+- **RAG: derealization/grounding phrasing not well covered.** Query
+  "everything feels unreal and far away, what can i do" retrieves a
+  tangential anxiety-exposure PDF chunk instead of real grounding
+  content. Found in `evaluations/rag_eval.py` (case category
+  `KNOWN_GAP_CASE`), score 0.596. Likely fix, when picked up: same
+  targeted content-improvement technique already proven for
+  Crisis/Depression/CBT/Coping (add a short, focused chunk to Grounding
+  Techniques using natural derealization/dissociation phrasing), then
+  rerun `evaluations/rag_eval.py`.
+- **RAG: "plate" idiom read literally as food, not overwhelm.** Query "I
+  have too much on my plate and I dont know how to handle it" matches a
+  diet/nutrition PDF chunk (score ~0.525-0.549) instead of Stress
+  Management. Found in the same eval, same `KNOWN_GAP_CASE` category.
+  Likely fix: a short Stress Management chunk with natural idiomatic
+  overwhelm phrasing ("too much on my plate," "drowning in everything I
+  have to do," etc.), same technique as above.
+- **`_should_use_rag` exists as two independently-diverged copies**
+  (`database.py` and `pages.py`) — found while fixing the RAG wiring gap,
+  not fixed (same drift pattern already consolidated for
+  `COPING_KEYWORDS`/`CONTINUITY_MARKERS`/routing itself, but not yet done
+  for this pair). Low priority: `database.py`'s version (the one that
+  actually gates the real prompt-injection path) is simpler and stricter
+  than `pages.py`'s (which additionally excludes emotional-sharing
+  phrasing) — worth reconciling into one function in `rag.py` if this
+  area gets touched again.
+- **`fetch_all_user_context` (database.py) is dead code** — defined,
+  never called anywhere; a stale comment in `engine.py` pointed to it
+  before the wiring fix. Not removed (out of scope, no behavior risk),
+  candidate for cleanup whenever dead code across the project gets swept
+  (`_select_session_context` in engine.py and `_COPING_KEYWORDS` in
+  pages.py are the same category of leftover from the router/memory work).
+
+---
+
 ## 33. Final Project Mental Model
 
 ```text
