@@ -105,17 +105,25 @@ AGENT_CONFIG = {
     },
     "coach": {
         "temperature": 0.45,
-        # 150 was cutting replies off mid-sentence whenever the coach prompt's own
-        # "coping_request: give 3-5 compact bullets" instruction produced a genuinely
-        # longer reply — observed directly in real use, not hypothetical. Bumped up,
-        # and max_retries below now lets the existing "hit length limit, try again
-        # with more room" recovery in _call_ollama actually engage (it was silently
-        # disabled at max_retries=0).
-        "num_predict": 220,
+        # 220 + max_retries=1 (the previous setting) was measured by
+        # evaluations/latency_benchmark.py to roughly double latency on
+        # long-answer intents (coping_request especially, per the coach
+        # prompt's own "3-5 compact bullets" instruction) when it hit the
+        # length limit - and the retry, capped at 260 by a hardcoded ceiling
+        # in _call_ollama's recovery logic, still didn't reliably avoid
+        # truncation. Same principle already used for "memory" below
+        # ("one clean long attempt — retrying doubles the wait"), applied
+        # here too: raised to 360 (empirically found - 3 representative
+        # long-answer prompts all completed cleanly at 360, single attempt,
+        # worst case ~19s vs. the previous two-attempt worst case ~58s that
+        # still truncated) and max_retries dropped to 0 to eliminate the
+        # double-latency risk entirely rather than trying to recover after
+        # the fact.
+        "num_predict": 360,
         "num_ctx": 2048,         # reduced from 3072
         "model": AVAILABLE_MODELS["quality"],
         "timeout_seconds": 110,
-        "max_retries": 1,
+        "max_retries": 0,
     },
 }
 
