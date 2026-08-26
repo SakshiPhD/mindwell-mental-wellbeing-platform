@@ -1187,7 +1187,24 @@ After implementation, report:
       reverified at guardrail_trigger_recall 100%/false_trigger_rate 0%
       and relevance_recall 100%/distractor_leakage_rate 0%. 7 new pytest
       regression tests. Full suite: 102/102.
-- [ ] RAG evaluation dataset created
+- [x] RAG evaluation dataset created — evaluations/rag_eval.py, a LangSmith
+      Dataset + Experiment (13 cases) for
+      rag.py::retrieve_relevant_chunks_with_metadata. First eval in this
+      project needing live Ollama embeddings + a real DB query per case
+      rather than pure offline logic (all cases use a fake user_id so only
+      the global knowledge base is touched, never real user data). Ground
+      truth was redesigned mid-build: exact category-name matching flagged
+      false "failures" where a legitimately relevant PDF chunk outscored
+      the curated category chunk for the same topic - verified by reading
+      the actual chunk content, then switched to a per-query set of
+      verified-acceptable sources. top1_source_accuracy 100% (11/11),
+      distractor_rejection 100% (1/1). production_threshold_pass_rate
+      82% (9/11) - a real, unresolved finding, not yet fixed: two correct
+      matches (Crisis Resources, Depression and Low Mood) score 0.646,
+      just under the production 0.65 cutoff in
+      pages.py::_filter_chunks_by_relevance, so that content is currently
+      silently dropped. Deliberately left open pending a threshold/content
+      tuning decision rather than a quick fix - see Known failures below.
 - [ ] Response-quality rubric created
 - [ ] Latency benchmark created
 
@@ -1261,10 +1278,15 @@ Update this section after each milestone.
 Current phase: Baseline stabilization complete. LangChain provider wrapper
   complete. LangGraph routing migration complete. LangSmith tracing complete
   and now tracing the real user_id=1 account with full content (owner's own
-  explicit, dated authorization — see checklist above). Safety, routing, and
-  memory evaluation datasets all complete, each with real bugs found and
-  fixed by the eval itself. RAG eval still open.
-Current code version: main, commit 3735dd2 (memory-eval milestone commit to follow)
+  explicit, dated authorization — see checklist above). All four planned
+  evaluation datasets (safety, routing, memory, RAG) now complete — the
+  evaluation-framework phase (roadmap phase 4) is essentially done. Safety,
+  routing, and memory each had a real bug found and fixed by the eval
+  itself. RAG's eval found a real gap (production_threshold_pass_rate 82%)
+  that's deliberately NOT yet fixed — a threshold/content tuning decision
+  the owner wants to make separately, not a quick keyword fix like the
+  other three.
+Current code version: main, commit 64e49da (RAG-eval milestone commit to follow)
 Current approved configuration: Ollama via LangChain's ChatOllama; routing
   decisions via router_graph.py (LangGraph); per-agent generation settings
   unchanged from AGENT_CONFIG in llm_provider.py; tracing opt-in via
@@ -1281,9 +1303,12 @@ Latest evaluation dataset version: evaluations/safety_crisis_eval.py (29
   crisis_override_reliability 100%. evaluations/memory_guardrail_eval.py
   (15 cases) — guardrail_trigger_recall 100%, guardrail_false_trigger_rate
   0%. evaluations/memory_relevance_eval.py (5 cases) — relevance_recall
-  100%, distractor_leakage_rate 0%. All four eval scripts and their pytest
-  regression counterparts are the reusable, re-runnable check going
-  forward, not one-off scripts.
+  100%, distractor_leakage_rate 0%. evaluations/rag_eval.py (13 cases) —
+  top1_source_accuracy 100%, distractor_rejection 100%,
+  production_threshold_pass_rate 82% (open finding, see Known failures).
+  All five eval scripts and their pytest regression counterparts (where a
+  code fix exists) are the reusable, re-runnable check going forward, not
+  one-off scripts.
 Best quality results: no formal quality rubric/scoring implemented yet;
   verification so far is real-conversation testing + targeted regression tests
 Current P50/P95/P99 latency: not yet a real percentile dataset (samples too
@@ -1296,16 +1321,25 @@ Known failures:
     any]") into real replies — a prompt instruction was added but is not
     reliably followed by this model; not yet given a deterministic guardrail
     the way the memory-fabrication issue was
-  - No test/eval coverage yet for RAG retrieval quality (next eval milestone)
+  - RAG: two correct retrievals (Crisis Resources; Depression and Low Mood)
+    score 0.646, just under pages.py::_filter_chunks_by_relevance's 0.65
+    production threshold — that content is silently dropped in the real
+    app even though retrieval found the right thing. Found by
+    evaluations/rag_eval.py; not yet fixed — needs a threshold/content
+    tuning decision (lower the global threshold vs. improve chunk content
+    vs. a category-specific threshold), not a quick keyword fix
   - Setup docs (README, Setup_and_Run_Instructions.md) still describe an
     OpenAI/LangChain/FAISS stack that was never actually true — not yet corrected
 Current deployment status: local only. Ollama-only in practice — LangChain
   makes a second provider possible to add but none is wired up yet
-Next hypothesis/experiment: safety, routing, and memory are all done (100%
-  on their key metrics, reverified). RAG eval is the last of the four
-  planned evaluation datasets — needs its own metric shape again: "did
-  retrieval pull the right knowledge-base document for this query," not
-  classification accuracy or recall-guardrail correctness.
+Next hypothesis/experiment: all four planned evaluation datasets are done.
+  Two threads open: (1) decide and implement a fix for the RAG
+  production_threshold_pass_rate gap (owner wants to decide the approach
+  before implementing), and (2) the roadmap's next unstarted areas are
+  response-quality rubric, latency benchmark, or moving into
+  phases 5+ (multi-provider, routing/memory/RAG optimization,
+  performance, CI/CD) — see the phase-by-phase status table shared with
+  the owner on 2026-08-26 for relative effort per phase.
 ```
 
 ---
