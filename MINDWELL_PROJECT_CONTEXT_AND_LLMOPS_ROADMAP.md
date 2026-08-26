@@ -1156,7 +1156,20 @@ After implementation, report:
       negation-paraphrase case) and false_positive_rate 30.8% (4 overly
       generic keywords). Both fixed and reverified at 100%/0%; 8 new
       pytest regression tests lock the fixes in. Full suite: 93/93.
-- [ ] Routing evaluation dataset created
+- [x] Routing evaluation dataset created — evaluations/routing_eval.py, a
+      LangSmith Dataset + Experiment (28 cases) for router_graph.py::route(),
+      covering all 8 intent labels plus crisis_override_reliability as its
+      own non-negotiable metric. Different from tests/test_router_graph.py
+      (an equivalence check against the two retired routers, never asked
+      "is the label actually correct"). First run found a real bug: plain
+      substring matching made the coping keyword "help" match inside
+      "helps", misrouting "thanks, that helps" into coping_request (96.3%
+      accuracy). Fixed with word-boundary matching (_keyword_hit in
+      router_graph.py); reverified at 100% accuracy, crisis_override_
+      reliability unchanged at 100%. 2 new pytest regression tests. Full
+      suite: 95/95. One gap deliberately left as documented, unscored scope:
+      "I am not feeling well today." matches no keyword and falls through
+      to general_chat — broader phrasing-coverage limitation, not a quick fix.
 - [ ] Memory evaluation dataset created
 - [ ] RAG evaluation dataset created
 - [ ] Response-quality rubric created
@@ -1232,10 +1245,10 @@ Update this section after each milestone.
 Current phase: Baseline stabilization complete. LangChain provider wrapper
   complete. LangGraph routing migration complete. LangSmith tracing complete
   and now tracing the real user_id=1 account with full content (owner's own
-  explicit, dated authorization — see checklist above). First evaluation
-  dataset (safety/crisis-detection) complete, with 2 real bugs found and
-  fixed by the eval itself.
-Current code version: main, commit b8c7668
+  explicit, dated authorization — see checklist above). Safety and routing
+  evaluation datasets both complete, each with real bugs found and fixed by
+  the eval itself. Memory and RAG evals still open.
+Current code version: main, commit d9fbb94 (routing-eval milestone commit to follow)
 Current approved configuration: Ollama via LangChain's ChatOllama; routing
   decisions via router_graph.py (LangGraph); per-agent generation settings
   unchanged from AGENT_CONFIG in llm_provider.py; tracing opt-in via
@@ -1247,11 +1260,12 @@ Current approved configuration: Ollama via LangChain's ChatOllama; routing
   mechanism to turn it back on for any future non-owner user still exists
   in that one function
 Latest evaluation dataset version: evaluations/safety_crisis_eval.py (29
-  cases, LangSmith Dataset "mindwell-safety-crisis-detection") for safety/
-  crisis detection — crisis_recall 100%, false_positive_rate 0% as of the
-  fixes in this milestone. router_graph.py's 17-case battery
-  (tests/test_router_graph.py) remains the reusable regression set for
-  routing correctness, still pytest-only rather than a LangSmith dataset
+  cases, LangSmith Dataset "mindwell-safety-crisis-detection") — crisis_recall
+  100%, false_positive_rate 0%. evaluations/routing_eval.py (28 cases,
+  LangSmith Dataset "mindwell-routing-classification") — accuracy 100%,
+  crisis_override_reliability 100%. Both eval scripts and their pytest
+  regression counterparts are the reusable, re-runnable check going forward,
+  not one-off scripts.
 Best quality results: no formal quality rubric/scoring implemented yet;
   verification so far is real-conversation testing + targeted regression tests
 Current P50/P95/P99 latency: not yet a real percentile dataset (samples too
@@ -1269,11 +1283,13 @@ Known failures:
     OpenAI/LangChain/FAISS stack that was never actually true — not yet corrected
 Current deployment status: local only. Ollama-only in practice — LangChain
   makes a second provider possible to add but none is wired up yet
-Next hypothesis/experiment: safety is done (100% recall, 0% false positive,
-  reverified). Routing, memory, and RAG still need their own LangSmith
-  evaluation datasets the same way — router_graph.py's pytest battery is
-  the natural starting point for a routing eval, since the cases already
-  exist and just need porting into the LangSmith Dataset/Experiment format.
+Next hypothesis/experiment: safety and routing are both done (100% on their
+  key metrics, reverified). Memory retrieval eval next, then RAG — each
+  needs its own dataset and its own metrics (not just reusing accuracy):
+  memory likely needs "did it recall the right stored fact / avoid
+  inventing one," RAG likely needs "did retrieval pull the right knowledge-
+  base document," both different shapes of correctness than routing's
+  single-label classification.
 ```
 
 ---

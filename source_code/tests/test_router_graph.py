@@ -78,3 +78,25 @@ def test_graph_greeting_short_circuits_regardless_of_continuity_when_no_session(
     graph_route = route("hi", has_session_context=False, references_past=False, risk_hint="low")
     assert graph_route["intent_label"] == "casual_greeting"
     assert graph_route["memory_needed"] == "false"
+
+
+def test_thanks_that_helps_is_not_coping_request():
+    """Found by evaluations/routing_eval.py: plain substring matching made
+    the coping keyword 'help' match inside 'helps', misrouting a plain
+    thank-you into coping-suggestion mode."""
+    graph_route = route("thanks, that helps", has_session_context=False, references_past=False, risk_hint="low")
+    assert graph_route["intent_label"] == "general_chat"
+
+
+def test_genuine_help_request_still_routes_to_coping():
+    """The word-boundary fix must not have weakened real detection - 'help'
+    as its own word must still trigger coping_request."""
+    for message in [
+        "I need help, I am so stressed",
+        "can you suggest some breathing exercises to help me calm down",
+        "what techniques can help me manage panic attacks",
+    ]:
+        graph_route = route(message, has_session_context=False, references_past=False, risk_hint="low")
+        assert graph_route["intent_label"] == "coping_request", (
+            f"{message!r} -> {graph_route['intent_label']!r}"
+        )

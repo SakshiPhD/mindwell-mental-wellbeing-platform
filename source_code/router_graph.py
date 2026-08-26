@@ -20,6 +20,7 @@ The graph is a direct translation of the existing "first matching rule
 wins" if/elif chain into explicit nodes and conditional edges — same rules,
 same order, now visible as a graph instead of buried in nested Python.
 """
+import re
 from typing import TypedDict, List
 
 from langgraph.graph import StateGraph, END
@@ -58,6 +59,24 @@ _GREETING_KEYWORDS = {
     "hi", "hello", "hey", "hii", "hie", "yo", "sup",
     "good morning", "good evening", "good night",
 }
+
+
+def _keyword_hit(keywords, text: str) -> bool:
+    """
+    Match keywords against text, but with word boundaries for single-word
+    keywords. Found by evaluations/routing_eval.py: plain substring
+    matching (`kw in text`) made "help" match inside "helps", routing
+    "thanks, that helps" into coping_request. Multi-word phrases keep using
+    substring matching - a phrase like "what should i do" is already safe
+    from this kind of accidental collision.
+    """
+    for kw in keywords:
+        if " " in kw:
+            if kw in text:
+                return True
+        elif re.search(rf"\b{re.escape(kw)}\b", text):
+            return True
+    return False
 
 
 def _prepare(state: RouterState) -> RouterState:
@@ -110,7 +129,7 @@ def _route_crisis(state: RouterState) -> str:
     if state.get("continuity_trigger"):
         return "continuity"
     text = (state.get("user_text") or "").strip().lower()
-    if any(kw in text for kw in COPING_KEYWORDS):
+    if _keyword_hit(COPING_KEYWORDS, text):
         return "coping"
     if any(kw in text for kw in EMOTIONAL_SUPPORT_KEYWORDS):
         return "emotional_support"
