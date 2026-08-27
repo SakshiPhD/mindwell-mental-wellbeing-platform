@@ -95,14 +95,6 @@ AGENT_CONFIG = {
         "timeout_seconds": 110,  # llama3 on local hardware needs this
         "max_retries": 0,        # one clean long attempt — retrying doubles the wait
     },
-    "orchestrator": {
-        "temperature": 0.5,
-        "num_predict": 260,
-        "num_ctx": 3072,         # reduced from 4096 — trim_context already caps at 4800 chars
-        "model": AVAILABLE_MODELS["quality"],
-        "timeout_seconds": 130,  # orchestrator is the critical agent — give it most time
-        "max_retries": 0,
-    },
     "coach": {
         "temperature": 0.45,
         # 220 + max_retries=1 (the previous setting) was measured by
@@ -125,6 +117,22 @@ AGENT_CONFIG = {
         "timeout_seconds": 110,
         "max_retries": 0,
     },
+}
+
+# Fallback config for call_llm() when agent_type isn't a recognized key in
+# AGENT_CONFIG above. Previously this fell back to AGENT_CONFIG["orchestrator"]
+# incidentally - not because the orchestrator agent's settings were meant as
+# a general default, just because that entry happened to exist. The
+# Orchestrator LLM agent itself was removed 2026-08-27 (router_graph.py's
+# LangGraph route() replaced it), so this default now has its own explicit
+# name and purpose instead of borrowing a dead agent's config.
+DEFAULT_AGENT_CONFIG = {
+    "temperature": 0.5,
+    "num_predict": 260,
+    "num_ctx": 3072,
+    "model": AVAILABLE_MODELS["quality"],
+    "timeout_seconds": 130,
+    "max_retries": 0,
 }
 
 CB_FAILURE_WINDOW_SECONDS = _env_int("OLLAMA_CB_WINDOW_SECONDS", 60)
@@ -150,7 +158,7 @@ class LLMProvider:
     def call_llm(agent_type: str, system_prompt: str, user_input: str) -> str:
         """Call an LLM with the configured backend."""
         try:
-            config = AGENT_CONFIG.get(agent_type, AGENT_CONFIG["orchestrator"])
+            config = AGENT_CONFIG.get(agent_type, DEFAULT_AGENT_CONFIG)
             if LLM_PROVIDER == "ollama":
                 return LLMProvider._call_ollama(system_prompt, user_input, config)
             logger.error("Unknown LLM provider: %s", LLM_PROVIDER)

@@ -292,59 +292,14 @@ OUTPUT JSON:
   "session_summary":"concise summary for future continuity"
 }
 """,
-######## changes by SB start #######
-"orchestrator": """
-ROLE: You are the Orchestrator.
-You do NOT talk to the user directly.
-Your job is only to classify the current turn and return JSON.
-
-Return JSON only in this format:
-{
-  "intent_label": "casual_greeting|continuity_followup|coping_request|emotional_support|general_chat|crisis",
-  "response_mode": "casual_chat|supportive_chat|coping_suggestion|crisis_support|normal_chat",
-  "memory_needed": "false|light|full",
-  "memory_types": ["onboarding_profile", "emotional_history", "previous_sessions", "current_session", "long_term_memory"],
-  "escalation_flag": false
-}
-
-Rules:
-- memory_needed = "false" when no memory is required
-- memory_needed = "light" when only lightweight memory is needed, usually onboarding_profile + current_session
-- memory_needed = "full" when deeper personalization is needed, using onboarding_profile, emotional_history, previous_sessions, current_session, and long_term_memory as relevant
-- memory_types must match the selected memory_needed level
-- Do not write a user-facing reply
-- No markdown
-- No explanation
-- Return valid JSON only
-""",
-######## changes by SB end #######
-#     "orchestrator": """
-# ROLE:
-# You are the main conversation companion.
-# Use the current user message plus trusted memory context provided by the system.
-
-# Behavior:
-# - Be warm, specific, and grounded.
-# - Stay on the same topic unless the user clearly changes it.
-# - No generic reassurance or lecture.
-# - Ask at most one question, and only when useful.
-# - Keep replies concise and natural (usually 2-4 sentences).
-# - If onboarding profile is available, use it to tailor your tone and topics.
-# - If user preferences are known, follow them (e.g., short replies, no questions).
-# - Include at least one concrete detail from the user's current message or relevant memory.
-# - If the user references earlier conversations, weave in only relevant remembered context naturally.
-# - Avoid stock filler like "I'm here for you", "stay strong", "I understand".
-# - Never output raw context logs or transcript markers.
-# - Do not include strings like "[Mar 05]", "User:", "Assistant:", "Current-session conversation:", or "Cross-session context:".
-
-# Internal quality pass before final output:
-# - Keep the same intended meaning.
-# - Remove vague/general lines and make wording specific.
-# - Ensure the reply remains on-topic and directly answers the user.
-
-# OUTPUT:
-# Return only the response text.
-# """,
+# The Orchestrator LLM agent (intent_label/response_mode/memory_needed/
+# memory_types/escalation_flag classification) was removed 2026-08-27 -
+# router_graph.py's LangGraph route() has produced this exact same JSON
+# shape deterministically since the routing migration, and the Orchestrator
+# LLM call itself had already been fully disabled (commented out, its
+# result unconditionally set to "" for every message) well before this
+# cleanup. See run_care_pipeline's route_decision - that's the real
+# orchestrator now.
 #     "coach": """
 # ROLE: High-risk support helper.
 # Used only for high-risk messages.
@@ -426,7 +381,7 @@ class MultiAgentEngine:
     """Optimized 4-agent parallel engine for mental wellness."""
 
     def __init__(self):
-        self.agents = ["safety", "memory", "orchestrator", "coach"]
+        self.agents = ["safety", "memory", "coach"]
         self.message_count = 0
         self.ask_question_cooldown = 0
         self._session_buffer = []
@@ -1258,7 +1213,7 @@ class MultiAgentEngine:
                 common_parts.append(profile_context)
 
             # Inject long-term memory (facts, last session summary, mood trend, user_memory table)
-            # into common_parts so both the orchestrator and memory agent receive it.
+            # into common_parts so the memory agent receives it.
             long_term_ctx = self._format_long_term_memory(memory_data)
             if long_term_ctx:
                 common_parts.append(long_term_ctx)
@@ -1473,7 +1428,7 @@ class MultiAgentEngine:
                 crisis_mem_context = crisis_instructions + mem_context
             results["memory"] = self._call_agent("memory", user_text, crisis_mem_context) or ""
 
-        # 3) Add safety-aware instructions before orchestrator runs
+        # 3) Add safety-aware instructions to the context passed to Coach
         orch_context_final = orch_context or ""
 
         if risk_level == "medium":
@@ -1494,20 +1449,6 @@ class MultiAgentEngine:
                 + orch_context_final
             )
 
-        # 4) For high risk, get coach support first; otherwise use orchestrator
-        ##### changes by SB start #######
-        # if risk_level == "high":
-        #     coach_context = (
-        #         f"User message: {user_text}\n"
-        #         "Risk level: HIGH\n"
-        #         f"Detected issues: {safety_data.get('issues', 'n/a')}\n\n"
-        #         f"Relevant profile context:\n{self._format_profile_context(memory_data)}"
-        #     )
-        #     coach_tip = self._call_agent("coach", coach_context) or ""
-        #     results["orchestrator"] = ""
-        # else:
-        #     results["orchestrator"] = self._call_agent("orchestrator", user_text, orch_context_final) or ""
-        
         continuity_only_context = (
             f"{source_truth_block}\n\n"
             f"LATEST USER MESSAGE:\n{user_text}\n\n"
@@ -1596,9 +1537,7 @@ class MultiAgentEngine:
             logger.info("Recall guardrail fired: topic=%r not found in available context — skipped LLM call", unverified_topic)
         else:
             coach_tip = self._call_agent("coach", user_text, coach_context, risk_level=risk_level) or ""
-        results["orchestrator"] = ""
         results["coach"] = coach_tip
-        ##### changes by SB end #######
 
         # Process memory result
         memory_has_contribution = False

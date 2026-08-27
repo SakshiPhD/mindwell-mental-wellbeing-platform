@@ -1455,17 +1455,40 @@ Known failures:
     OpenAI/LangChain/FAISS stack that was never actually true — not yet corrected
 Current deployment status: local only. Ollama-only in practice — LangChain
   makes a second provider possible to add but none is wired up yet
+Architecture note (2026-08-27, confirmed and cleaned up): orchestration
+  (intent_label/response_mode/memory_needed/memory_types/escalation_flag
+  classification) is fully and solely handled by router_graph.py's
+  LangGraph route() — confirmed by tracing route_decision's usage
+  end-to-end through run_care_pipeline with zero dependency on any LLM
+  agent output. The old Orchestrator LLM agent (prompt, its one remaining
+  commented-out call site, the stale self.agents entry, and the
+  now-redundant results["orchestrator"] = "" assignment) has been
+  removed from engine.py. llm_provider.py::AGENT_CONFIG no longer has an
+  "orchestrator" key; its former incidental role as call_llm()'s fallback
+  default for unrecognized agent_type values is now an explicitly named
+  DEFAULT_AGENT_CONFIG with the same values, not a dead agent's leftover
+  config. The legacy `agent_orchestrator`/`agent_orchestrator_output`
+  analytics fields were deliberately left untouched (still read via
+  results.get(), correctly still resolve to "No"/"" now that the key is
+  never set) for DB/reporting compatibility. Verified via full pytest
+  (103/103) plus real end-to-end pipeline runs (coping_request and
+  crisis messages) confirming routing, safety, memory, and Coach all
+  still behave identically. A separate, larger commented-out
+  ThreadPoolExecutor-based parallel-dispatch block (spanning
+  orchestrator/memory/safety together, not orchestrator-specific) was
+  found but deliberately left alone - out of scope for this focused
+  cleanup.
 Next hypothesis/experiment: both LLM-call fixes from the latency benchmark
   are done and measured (Coach -53% on its worst case; Memory -38%
-  combined plus a real correctness fix). Still open, not yet scoped:
-  model right-sizing (actionable-blocked - "fast"/"quality" are the same
-  model, AVAILABLE_MODELS, until a genuinely smaller model is pulled and
+  combined plus a real correctness fix), and the Orchestrator dead-code
+  cleanup is done. Still open, not yet scoped: model right-sizing
+  (actionable-blocked - "fast"/"quality" are the same model,
+  AVAILABLE_MODELS, until a genuinely smaller model is pulled and
   validated, roadmap Phase 5 territory); streaming (deliberately
-  deferred, see Backlog); DB/client review; caching; Safety/Orchestrator
-  configs (untouched, lower-leverage - Safety is already only 1-2% of
-  total, Orchestrator is dead code per the earlier RAG-wiring
-  investigation). Per the owner's stated plan (2026-08-27): more latency
-  work or move to CI/CD and deployment readiness next.
+  deferred, see Backlog); DB/client review; caching; Safety agent's own
+  config (untouched, lower-leverage - already only 1-2% of total time).
+  Per the owner's stated plan (2026-08-27): more latency work or move to
+  CI/CD and deployment readiness next.
 ```
 
 ---
