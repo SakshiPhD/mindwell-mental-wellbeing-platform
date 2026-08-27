@@ -1282,11 +1282,25 @@ After implementation, report:
       inter-agent information flow - out of scope for this milestone,
       recorded in Backlog.
 - [ ] Caching evaluated safely
-- [x] Context and token budgets optimized — Coach specifically: raised
-      num_predict 220→360, max_retries 1→0 (llm_provider.py::AGENT_CONFIG),
-      after empirically testing candidate values against representative
-      long-answer prompts. Not yet done for Safety/Memory/Orchestrator
-      configs - Coach was the evidenced target this round.
+- [x] Context and token budgets optimized — Coach: raised num_predict
+      220→360, max_retries 1→0 (llm_provider.py::AGENT_CONFIG), empirically
+      tested against representative long-answer prompts. Memory: prompt
+      shortened (engine.py::AGENT_PROMPTS["memory"]) rather than raising
+      its num_predict (kept at 180, unchanged, per the owner's explicit
+      instruction) - the old prompt asked for more output than 180 tokens
+      could deliver, chronically truncating and silently dropping
+      session_summary in 5/5 tested cases. Compared old vs. a shortened
+      candidate on 5 fixed cases: truncation 5/5→0/5, avg latency
+      10.90s→5.38s, all 7 required JSON fields present 4/5→5/5. One
+      semantic issue caught before adoption (owner's review): an early
+      candidate's memory_recall sometimes read as advice ("notice your
+      breathing...") rather than recalled history, blurring Memory/Coach
+      role separation - prompt tightened to explicitly require descriptive
+      phrasing ("they found X helpful before") not instructions, retested
+      clean (0/5 truncated, all fields present, no advice-phrased recall)
+      before being adopted. Verified via the real pipeline
+      (evaluations/latency_benchmark.py): Memory's combined latency
+      -38%, 0 truncations. Not yet done for Safety/Orchestrator configs.
 - [ ] Database/client performance reviewed — memory-fetch already found
       cheap (5-8% of total), not deeply reviewed beyond that
 - [x] Streaming evaluated — checked directly: real latency-hiding option,
@@ -1343,13 +1357,14 @@ Current phase: Baseline stabilization complete. LangChain provider wrapper
   complete. LangGraph routing migration complete. LangSmith tracing complete
   and now tracing the real user_id=1 account with full content (owner's own
   explicit, dated authorization — see checklist above). Evaluation phase
-  CLOSED as of 2026-08-27. Latency benchmark complete, and its headline
-  finding (Coach retry-doubling) is now fixed and measured: coping_request
-  94.6s→44.1s (-53%), combined across the 5 benchmark messages 176.5s→
-  115.8s (-34%). Next: further latency work (model right-sizing, DB/client
-  review, caching — all still open) or move to CI/CD and deployment
-  readiness per the owner's stated plan.
-Current code version: main, commit 1f3db80 (latency-optimization milestone commit to follow)
+  CLOSED as of 2026-08-27. Latency benchmark complete. Two fixes now done
+  and measured from its findings: Coach retry-doubling (coping_request
+  94.6s→44.1s, -53%) and Memory prompt/truncation (Memory's own combined
+  latency -38%, chronic session_summary truncation fixed, 5/5→0/5). Next:
+  further latency work (model right-sizing, DB/client review, caching —
+  all still open) or move to CI/CD and deployment readiness per the
+  owner's stated plan.
+Current code version: main, commit 1ee2a6b (memory-prompt-fix milestone commit to follow)
 Current approved configuration: Ollama via LangChain's ChatOllama; routing
   decisions via router_graph.py (LangGraph); per-agent generation settings
   unchanged from AGENT_CONFIG in llm_provider.py; tracing opt-in via
@@ -1379,19 +1394,39 @@ Best quality results: no formal quality rubric/scoring implemented yet;
   verification so far is real-conversation testing + targeted regression tests
 Current P50/P95/P99 latency: real percentile dataset —
   chat_messages.latency_seconds, 47 real messages: P50=9.47s, P95=33.67s,
-  P99=41.05s (from before the Coach fix; not yet re-measured against real
-  traffic post-fix, since real users haven't generated new rows yet).
-  Per-component breakdown post-fix (evaluations/latency_benchmark.py, 5
-  representative messages): Coach + Memory LLM calls = 88% of total time
-  (down slightly from 92%, mechanically expected since Coach's own time
-  dropped); memory fetch + RAG + routing + deterministic crisis lookup
-  combined = under 12%. coping_request (the worst case pre-fix) dropped
-  from 94.6s to 44.1s. One real, accepted trade-off: with max_retries=0,
-  a coach reply that would have retried before can now return truncated
-  on the first attempt instead of paying double latency for an
-  unreliable second attempt — same principle already used for the
-  Memory agent's config, applied consistently.
+  P99=41.05s (from before both fixes; not yet re-measured against real
+  traffic, since real users haven't generated new rows yet).
+  Per-component breakdown after both fixes (evaluations/latency_benchmark.py,
+  5 representative messages): Coach + Memory LLM calls = 84.8% of total
+  time (down from 92% pre-fix); memory fetch + RAG + routing +
+  deterministic crisis lookup combined = under 16%. Memory's own combined
+  latency -38% (39.6s→24.5s across the 5 messages) with truncation fixed
+  (was chronic, now 0). Coach's coping_request case (the worst pre-fix
+  outlier) dropped from 94.6s to 44.1s. Two accepted trade-offs, not
+  regressions: Coach's max_retries=0 means an occasional reply can return
+  truncated on the first attempt instead of paying double latency for an
+  unreliable retry; Memory's shortened prompt trades verbose "DETAILED"
+  recall for concise-but-complete recall (verified the concise version is
+  still substantive, not generic filler, and — after one round of
+  tightening prompted by the owner's review — stays a description of past
+  history rather than drifting into Coach's advice-giving role).
 Known failures:
+  - Memory agent's prompt/token-budget mismatch FIXED 2026-08-27 (kept here
+    as a record): the old prompt asked for a "detailed 2-4 sentence"
+    summary plus a "DETAILED and SPECIFIC" memory_recall inside a
+    180-token output budget (left unchanged per the owner's instruction -
+    this was a prompt fix, not a config fix). Measured truncation on 5/5
+    fixed test cases, with session_summary silently missing from the
+    parsed JSON in all 5 - not a latency-only issue, a real correctness
+    gap that had been happening in production. Fixed by shortening what
+    the prompt asks for (engine.py::AGENT_PROMPTS["memory"]), tested old
+    vs. candidate on the same 5 cases before adopting: truncation 5/5→0/5,
+    avg latency 10.90s→5.38s, fields present 4/5→5/5. One round of
+    tightening required after the owner caught that an early candidate's
+    memory_recall sometimes read as advice rather than recalled history
+    ("notice your breathing" vs. "they found deep breathing helpful
+    before") - retested clean before adoption. Verified via the real
+    pipeline: Memory's combined latency -38%, 0 truncations.
   - Coach agent's hit-length-limit retry FIXED 2026-08-27 (kept here as a
     record): was max_retries=1 at num_predict=220, roughly doubling
     latency on long-answer intents without reliably avoiding truncation.
@@ -1420,17 +1455,17 @@ Known failures:
     OpenAI/LangChain/FAISS stack that was never actually true — not yet corrected
 Current deployment status: local only. Ollama-only in practice — LangChain
   makes a second provider possible to add but none is wired up yet
-Next hypothesis/experiment: the Coach retry-doubling fix is done and
-  measured (coping_request -53%, combined benchmark total -34%). Still
-  open, not this round's scope: Memory agent's own latency share (33%,
-  unchanged - it never retries so isn't inflated by the same mechanism,
-  but its base cost wasn't examined); model right-sizing (still
-  actionable-blocked - "fast"/"quality" are the same model,
-  AVAILABLE_MODELS, until a genuinely smaller model is pulled and
-  validated, which is roadmap Phase 5 territory); streaming (deliberately
-  deferred, see Backlog); DB/client review; caching. Per the owner's
-  stated plan (2026-08-27): more latency work or move to CI/CD and
-  deployment readiness next.
+Next hypothesis/experiment: both LLM-call fixes from the latency benchmark
+  are done and measured (Coach -53% on its worst case; Memory -38%
+  combined plus a real correctness fix). Still open, not yet scoped:
+  model right-sizing (actionable-blocked - "fast"/"quality" are the same
+  model, AVAILABLE_MODELS, until a genuinely smaller model is pulled and
+  validated, roadmap Phase 5 territory); streaming (deliberately
+  deferred, see Backlog); DB/client review; caching; Safety/Orchestrator
+  configs (untouched, lower-leverage - Safety is already only 1-2% of
+  total, Orchestrator is dead code per the earlier RAG-wiring
+  investigation). Per the owner's stated plan (2026-08-27): more latency
+  work or move to CI/CD and deployment readiness next.
 ```
 
 ---
