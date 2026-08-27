@@ -1558,6 +1558,21 @@ actively worked; they wait until explicitly picked up.
   classification-only Safety agent) but requires pulling and validating a
   new model first - that's roadmap Phase 5 (multi-provider/model
   comparison) territory, not a quick config change.
+- **Commented-out `ThreadPoolExecutor` parallel-dispatch block in
+  `engine.py`** (found 2026-08-27 during the Orchestrator dead-code
+  cleanup sweep, deliberately left unchanged) — a separate, older attempt
+  at running Safety/Memory/Orchestrator concurrently via
+  `executor.submit()`/`future_to_agent`, spanning all three agents
+  together rather than being Orchestrator-specific (which is why it
+  wasn't removed alongside the Orchestrator cleanup). Directly related to
+  the "True parallelization of Safety/Memory/Coach agent calls" item
+  above: real ordering dependencies exist today (Safety's risk assessment
+  changes what Memory fetches; Memory's output feeds Coach's prompt), so
+  this old block can't just be uncommented as-is. Owner's explicit
+  instruction (2026-08-27): review parallel execution later as its own
+  separate latency milestone, not as part of routine cleanup — this old
+  code is a reference/starting point for that future milestone, not
+  something to delete or revive casually.
 
 ---
 
