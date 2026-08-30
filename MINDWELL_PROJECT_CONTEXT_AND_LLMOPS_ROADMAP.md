@@ -1123,8 +1123,12 @@ After implementation, report:
       the LangChain migration (see commit 3fc0310); not yet a formal P50/P95/P99
       dataset (sample sizes so far are one-off, not a repeatable benchmark run)
 - [ ] Baseline Git tag created
-- [ ] Branch and Pull Request workflow established — feature branches and
-      real commit messages are in use (see git log); no PR/remote workflow yet
+- [x] Branch and Pull Request workflow established — feature branches and
+      real commit messages have been standard practice throughout; a real
+      GitHub PR (#1) was opened, watched through a live CI run, and merged
+      2026-08-27 as part of the CI/CD milestone. Local main was synced
+      with origin/main as a one-time bootstrap first (clean fast-forward,
+      verified no secrets in any pushed file/history before doing so).
 
 ### Observability and evaluation
 
@@ -1324,9 +1328,23 @@ After implementation, report:
 
 - [ ] Experiment-tracking format/tool implemented
 - [ ] Model/configuration registry implemented
-- [ ] Unit and integration tests implemented
-- [ ] Safety and LLM regression gates implemented
-- [ ] GitHub Actions CI configured
+- [ ] Unit and integration tests implemented — 103 pytest tests exist and
+      are real regression coverage, but this checklist item implies more
+      (documented coverage strategy, intentional gaps tracked) than "tests
+      exist and pass"
+- [ ] Safety and LLM regression gates implemented — the safety pytest
+      suite + evaluations/safety_crisis_eval.py exist, but neither is
+      wired as an automated CI gate yet (CI currently only runs the
+      general pytest suite, which does include the safety tests, but
+      there's no dedicated required check specifically for safety
+      regressions, and the LangSmith evals aren't in CI at all - by design,
+      since they need live services)
+- [x] GitHub Actions CI configured — .github/workflows/tests.yml, PR to
+      main + push to main + workflow_dispatch triggers, 103/103 pytest
+      verified on a real run (PR #1, merged 2026-08-27), zero secrets
+      required. Branch protection requiring the check to pass was
+      documented step-by-step for the owner to enable via the GitHub UI -
+      not yet confirmed done (owner's action, not verified from this side).
 - [ ] Controlled CD/staging workflow configured
 - [ ] Dockerfile and `.dockerignore` added
 - [ ] Docker image builds and runs
@@ -1357,14 +1375,16 @@ Current phase: Baseline stabilization complete. LangChain provider wrapper
   complete. LangGraph routing migration complete. LangSmith tracing complete
   and now tracing the real user_id=1 account with full content (owner's own
   explicit, dated authorization — see checklist above). Evaluation phase
-  CLOSED as of 2026-08-27. Latency benchmark complete. Two fixes now done
-  and measured from its findings: Coach retry-doubling (coping_request
-  94.6s→44.1s, -53%) and Memory prompt/truncation (Memory's own combined
-  latency -38%, chronic session_summary truncation fixed, 5/5→0/5). Next:
-  further latency work (model right-sizing, DB/client review, caching —
-  all still open) or move to CI/CD and deployment readiness per the
-  owner's stated plan.
-Current code version: main, commit 1ee2a6b (memory-prompt-fix milestone commit to follow)
+  CLOSED as of 2026-08-27. Latency benchmark complete, with two fixes done
+  and measured (Coach retry-doubling -53% on its worst case; Memory
+  prompt/truncation -38% combined plus a real correctness fix). Dead
+  Orchestrator LLM agent code removed, LangGraph confirmed as sole
+  orchestration mechanism. CI/CD milestone (first slice) also complete as
+  of 2026-08-27: GitHub Actions running the pytest suite on PR/push/manual
+  triggers, verified with a real PR (#1) watched through a live run and
+  merged. Branch protection walkthrough given to the owner, not yet
+  confirmed enabled from this side.
+Current code version: main, commit 0ac90ab
 Current approved configuration: Ollama via LangChain's ChatOllama; routing
   decisions via router_graph.py (LangGraph); per-agent generation settings
   unchanged from AGENT_CONFIG in llm_provider.py; tracing opt-in via
@@ -1478,17 +1498,19 @@ Architecture note (2026-08-27, confirmed and cleaned up): orchestration
   orchestrator/memory/safety together, not orchestrator-specific) was
   found but deliberately left alone - out of scope for this focused
   cleanup.
-Next hypothesis/experiment: both LLM-call fixes from the latency benchmark
-  are done and measured (Coach -53% on its worst case; Memory -38%
-  combined plus a real correctness fix), and the Orchestrator dead-code
-  cleanup is done. Still open, not yet scoped: model right-sizing
-  (actionable-blocked - "fast"/"quality" are the same model,
-  AVAILABLE_MODELS, until a genuinely smaller model is pulled and
-  validated, roadmap Phase 5 territory); streaming (deliberately
-  deferred, see Backlog); DB/client review; caching; Safety agent's own
-  config (untouched, lower-leverage - already only 1-2% of total time).
-  Per the owner's stated plan (2026-08-27): more latency work or move to
-  CI/CD and deployment readiness next.
+Next hypothesis/experiment: the pytest-suite CI job is live and merged
+  (PR #1). Immediate next steps, roughly in order of what naturally
+  builds on what's already done: (1) confirm branch protection is enabled
+  (owner's action, walkthrough already given); (2) decide whether the
+  safety pytest tests / safety eval need their own dedicated required CI
+  check, separate from the general suite, given "Safety and LLM
+  regression gates implemented" is still unchecked; (3) Docker + staging
+  deployment (the bigger remaining CI/CD checklist chunk: Dockerfile,
+  image build/run, secrets/environments, Streamlit staging, hosted model
+  endpoint, smoke tests, rollback). Separately still open, not blocking:
+  model right-sizing (Phase 5 territory), streaming, parallelization,
+  DB/client review, caching (all in Backlog). Per the owner's stated plan
+  (2026-08-27): CI/CD and deployment readiness is the active track.
 ```
 
 ---
