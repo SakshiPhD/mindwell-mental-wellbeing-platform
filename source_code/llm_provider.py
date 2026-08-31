@@ -159,8 +159,21 @@ GROQ_CONFIG = _load_groq_config()
 # whisper-*/orpheus-*/*-prompt-guard-*/allam-2-7b are speech/safety-
 # classifier/single-language models, not usable here.
 GROQ_MODELS = {
-    "fast": "openai/gpt-oss-20b",       # clean output, no reasoning-block leakage
-    "quality": "openai/gpt-oss-120b",   # bigger, same clean-output family
+    # Was "openai/gpt-oss-20b" until evaluations/model_comparison.py found
+    # a real, safety-relevant problem with it, not a style preference:
+    # under the strict "output ONLY this JSON" Safety-agent prompt, 20b
+    # sometimes ignores the instruction entirely and writes a natural-
+    # language empathetic reply instead (confirmed directly in the
+    # comparison log) - exactly on emotionally-heavy messages, i.e. the
+    # ones that matter most. That makes _extract_json() fail, and
+    # engine.py's safety_data defaults risk to "low" when parsing fails -
+    # so a genuine crisis message could silently be treated as low risk.
+    # Measured: safety_accuracy 44% (20b) vs 100% (120b), memory JSON
+    # completeness 20% (20b) vs 80% (120b), for near-identical latency
+    # (~0.6s either way). 120b is both the safer and the faster-in-
+    # practice choice here, not a real speed/safety trade-off.
+    "fast": "openai/gpt-oss-120b",
+    "quality": "openai/gpt-oss-120b",
     "reasoning": "qwen/qwen3.6-27b",    # exposes a <think> block - see _strip_reasoning_block
 }
 
