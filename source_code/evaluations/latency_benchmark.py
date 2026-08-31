@@ -152,6 +152,22 @@ def print_report(results: list):
 
 
 def main():
+    # Unlike the other evaluations/*.py scripts, this one still runs and
+    # prints its console report even if LangSmith isn't configured (fail
+    # open, matching tracing.py's own design) - there's no pass/fail here,
+    # just measurement, so a missing LangSmith key shouldn't block it.
+    # Found missing entirely until 2026-08-31: every prior benchmark run
+    # (including both the Coach and Memory latency fixes) never called
+    # this, so none of those runs ever showed up in LangSmith - the
+    # per-agent breakdown this script prints to the console was real, but
+    # invisible on the dashboard.
+    from tracing import configure_tracing
+    traced = configure_tracing(environment="development")
+    if traced:
+        print("LangSmith tracing: ON - this run's traces will appear in the LangSmith project.\n")
+    else:
+        print("LangSmith tracing: OFF (no API key found) - continuing without it.\n")
+
     print("Running latency benchmark against the real pipeline "
           "(live Ollama + real DB, fake user_id - no real user data touched)...\n")
     results = []
