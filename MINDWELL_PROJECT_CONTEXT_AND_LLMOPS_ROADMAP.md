@@ -1250,15 +1250,28 @@ After implementation, report:
 
 ### Models, agents, memory, and RAG
 
-- [ ] Common model-provider interface implemented — LangChain now wired in as
-      the call mechanism (llm_provider.py::_call_ollama uses ChatOllama), but
-      there's still only one provider actually connected; no config-driven
-      provider switch exists yet
+- [x] Common model-provider interface implemented — llm_provider.py::call_llm()
+      tries Ollama first, falls back to Groq (cloud-hosted, OpenAI-compatible
+      API) automatically. No config-driven switch was needed in the end -
+      _call_ollama's existing fast health-check failure (~2s) naturally
+      routes to Groq when Ollama is unreachable, so the same code is
+      Ollama-only locally and Ollama-then-Groq in the cloud with zero
+      environment-variable branching.
 - [x] Ollama provider verified — verified through the new LangChain path
       specifically: real latency baseline, forced model-fallback test, forced
       connection-failure test, full regression suite, all passing
-- [ ] At least one alternative open-weight serving path verified
-- [ ] Model comparison completed
+- [x] At least one alternative open-weight serving path verified — Groq
+      (openai/gpt-oss-20b default), verified live: direct call, forced-
+      Ollama-unreachable fallback (both via _call_groq() directly and the
+      full _call_agent() pipeline), and a real bug found+fixed (a
+      reasoning model's unclosed <think> block could leak raw reasoning -
+      see Known failures). Model catalog checked live via
+      client.models.list(), not assumed - Groq's lineup had changed from
+      what's commonly documented.
+- [ ] Model comparison completed — infrastructure now exists (Ollama +
+      2-3 Groq models all reachable through the same call_llm()
+      interface) but the actual side-by-side comparison (running the
+      existing eval datasets against each model) hasn't been done yet
 - [x] Conditional agent routing implemented — replaced the two independently
       duplicated routers (engine.py + pages.py) with one LangGraph graph
       (router_graph.py); verified equivalent to both prior implementations
