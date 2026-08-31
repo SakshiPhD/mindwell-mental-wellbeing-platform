@@ -1332,19 +1332,23 @@ After implementation, report:
       are real regression coverage, but this checklist item implies more
       (documented coverage strategy, intentional gaps tracked) than "tests
       exist and pass"
-- [ ] Safety and LLM regression gates implemented — the safety pytest
-      suite + evaluations/safety_crisis_eval.py exist, but neither is
-      wired as an automated CI gate yet (CI currently only runs the
-      general pytest suite, which does include the safety tests, but
-      there's no dedicated required check specifically for safety
-      regressions, and the LangSmith evals aren't in CI at all - by design,
-      since they need live services)
+- [x] Safety and LLM regression gates implemented — .github/workflows/tests.yml
+      has a dedicated "safety" job (separate from the general "pytest"
+      job), running only test_safety_crisis_detection.py (15 crisis/
+      safety-detection regression tests), so it shows as its own named,
+      independently-requirable GitHub check. Verified live on a real run
+      (PR #2, merged 2026-08-31) - both "safety" and "pytest" checks
+      green. The LangSmith safety eval (evaluations/safety_crisis_eval.py)
+      remains deliberately out of CI - needs live Ollama, stays
+      manually-run.
 - [x] GitHub Actions CI configured — .github/workflows/tests.yml, PR to
       main + push to main + workflow_dispatch triggers, 103/103 pytest
       verified on a real run (PR #1, merged 2026-08-27), zero secrets
-      required. Branch protection requiring the check to pass was
-      documented step-by-step for the owner to enable via the GitHub UI -
-      not yet confirmed done (owner's action, not verified from this side).
+      required. Confirmed 2026-08-31: main branch protection is NOT yet
+      enabled (gh api returned 404 "Branch not protected") - a direct
+      push to main went through with no rejection. Walkthrough given to
+      the owner previously; still open, now with two checks ("pytest"
+      and "safety") to select once enabled.
 - [ ] Controlled CD/staging workflow configured
 - [ ] Dockerfile and `.dockerignore` added
 - [ ] Docker image builds and runs
