@@ -9,7 +9,7 @@ connection-failure test — see the milestone notes), not re-mocked here.
 """
 import time
 import llm_provider
-from llm_provider import LLMProvider, _ends_cleanly, _to_bool, _env_int, _env_bool
+from llm_provider import LLMProvider, _ends_cleanly, _to_bool, _env_int, _env_bool, _strip_reasoning_block
 
 
 def setup_function():
@@ -116,3 +116,32 @@ def test_env_bool_reads_env_var(monkeypatch):
     assert _env_bool("TEST_ENV_BOOL", False) is True
     monkeypatch.delenv("TEST_ENV_BOOL", raising=False)
     assert _env_bool("TEST_ENV_BOOL", False) is False
+
+
+# --- _strip_reasoning_block: found via live testing against Groq's
+# qwen/qwen3.6-27b, a reasoning model that outputs a <think>...</think>
+# chain-of-thought before the real answer - see llm_provider.py's own
+# docstring on this function for the full incident (an unclosed <think>
+# block consumed the entire token budget, leaking raw reasoning text).
+
+def test_strips_a_closed_think_block():
+    text = "<think>internal reasoning here</think>The real answer."
+    assert _strip_reasoning_block(text) == "The real answer."
+
+
+def test_unclosed_think_block_returns_empty_not_raw_reasoning():
+    """The real bug: token budget ran out mid-reasoning, so </think>
+    never arrived. Must not leak the raw reasoning as if it were the
+    answer - treated as no answer at all."""
+    text = "<think>still thinking about tips for stress...no closing tag"
+    assert _strip_reasoning_block(text) == ""
+
+
+def test_no_think_block_is_a_safe_no_op():
+    text = "Just a normal reply, no reasoning tags at all."
+    assert _strip_reasoning_block(text) == text
+
+
+def test_empty_input_is_a_safe_no_op():
+    assert _strip_reasoning_block("") == ""
+    assert _strip_reasoning_block(None) is None
