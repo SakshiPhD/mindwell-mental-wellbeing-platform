@@ -1268,10 +1268,26 @@ After implementation, report:
       see Known failures). Model catalog checked live via
       client.models.list(), not assumed - Groq's lineup had changed from
       what's commonly documented.
-- [ ] Model comparison completed — infrastructure now exists (Ollama +
-      2-3 Groq models all reachable through the same call_llm()
-      interface) but the actual side-by-side comparison (running the
-      existing eval datasets against each model) hasn't been done yet
+- [x] Model comparison completed — evaluations/model_comparison.py,
+      deliberately NOT a rerun of the existing 5 eval datasets (checked
+      first: none of them ever call a chat model - safety/routing/memory
+      evals test deterministic Python logic, RAG eval tests only the
+      embedding model - so pointing them at a different chat model would
+      score identically regardless of model). Built a genuinely new
+      comparison across the 3 real LLM-calling agents (Safety/Memory/
+      Coach) for 4 models (Ollama llama3, Groq gpt-oss-20b/120b, Groq
+      qwen3.6-27b reasoning). Real, safety-relevant finding on the first
+      run: gpt-oss-20b (the just-added default Groq fallback) scored
+      safety_accuracy 44% - it sometimes ignores the Safety agent's
+      strict JSON-only prompt on emotionally-heavy messages and writes an
+      empathetic reply instead, which fails JSON parsing and silently
+      defaults to "low" risk in engine.py. Switched the default to
+      gpt-oss-120b (safety_accuracy 100%, memory JSON completeness 80%,
+      same latency) - verified with a direct real-agent test
+      (Ollama-unreachable simulated, correct "risk":"high" JSON
+      confirmed). qwen3.6-27b works but is slow (~19.5s Coach latency)
+      and its <think> block still occasionally overruns even a
+      1500-token budget - kept available, not made a default.
 - [x] Conditional agent routing implemented — replaced the two independently
       duplicated routers (engine.py + pages.py) with one LangGraph graph
       (router_graph.py); verified equivalent to both prior implementations
