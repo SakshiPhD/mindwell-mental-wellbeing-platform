@@ -13,6 +13,7 @@ actual chat completion, no reason to bring LangChain into that path too.
 import logging
 import os
 import random
+import re
 import threading
 import time
 from typing import Dict, Any
@@ -61,6 +62,44 @@ def _ends_cleanly(text: str) -> bool:
     return stripped[-1] in '.!?"\')]}'
 
 
+_REASONING_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_reasoning_block(text: str) -> str:
+    """
+    Some Groq models (e.g. qwen/qwen3.6-27b) are reasoning models that
+    output their internal <think>...</think> chain-of-thought before the
+    real answer - confirmed directly by testing, not assumed. That
+    reasoning text must never reach a user in a mental-wellness coaching
+    app (confusing at best, and the Coach prompt already has its own rule
+    against exposing internal process - this is the same principle,
+    applied to a leak this project's other sanitizer,
+    engine.py::_sanitize_reply_text, was never built to catch).
+
+    Real failure mode found directly, not hypothetical: a reasoning
+    model's <think> block can be long enough to consume the entire token
+    budget before the closing </think> tag (let alone a real answer) ever
+    arrives - confirmed with qwen/qwen3.6-27b at a 300-token budget. The
+    regex below only matches a *closed* <think>...</think> pair, so an
+    unclosed one (reasoning still in progress when generation got cut
+    off) would otherwise pass straight through as if it were the real
+    answer. Treated as no real answer at all - "" - rather than showing
+    the user a wall of raw reasoning, so the caller's normal
+    empty-response handling (retry/fallback/skip) applies the same way
+    an outright failure would.
+    """
+    if not text:
+        return text
+    if "<think>" in text.lower() and "</think>" not in text.lower():
+        logger.warning(
+            "Reasoning block never closed within the token budget - "
+            "discarding rather than leaking raw reasoning (len=%d)", len(text),
+        )
+        return ""
+    stripped = _REASONING_BLOCK_RE.sub("", text).strip()
+    return stripped if stripped else text
+
+
 # ===================== CONFIGURATION =====================
 LLM_PROVIDER = "ollama"
 
@@ -74,6 +113,55 @@ AVAILABLE_MODELS = {
 OLLAMA_CONFIG = {
     "base_url": os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
     "model": AVAILABLE_MODELS["fast"],
+}
+
+
+def _load_groq_config():
+    """
+    Groq credentials, same resolution pattern as database.py's
+    _load_db_credentials / tracing.py's _load_langsmith_config: a
+    [groq] section in .streamlit/secrets.toml, read from a path anchored
+    to this file (works regardless of the directory the app was launched
+    from), then a GROQ_API_KEY env var as a fallback. Returns None if
+    neither is configured - Groq is an optional fallback provider, not a
+    hard requirement (matches this project's fail-open pattern for every
+    optional external service).
+    """
+    try:
+        import toml
+        here = os.path.dirname(os.path.abspath(__file__))
+        secrets_path = os.path.abspath(os.path.join(here, "..", ".streamlit", "secrets.toml"))
+        if os.path.isfile(secrets_path):
+            with open(secrets_path, "r") as f:
+                parsed = toml.load(f)
+            groq = parsed.get("groq")
+            if groq and groq.get("api_key"):
+                return {
+                    "api_key": groq["api_key"],
+                    "base_url": groq.get("base_url", "https://api.groq.com/openai/v1"),
+                }
+    except Exception as e:
+        logger.warning("Could not read Groq config from secrets.toml: %s", e)
+
+    if os.getenv("GROQ_API_KEY"):
+        return {
+            "api_key": os.getenv("GROQ_API_KEY"),
+            "base_url": os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+        }
+    return None
+
+
+GROQ_CONFIG = _load_groq_config()
+
+# Real, current Groq model catalog as of 2026-08-31 (verified directly via
+# client.models.list() - Groq's lineup changes over time, so this isn't
+# guessed from general knowledge). Chat-capable general-purpose models only;
+# whisper-*/orpheus-*/*-prompt-guard-*/allam-2-7b are speech/safety-
+# classifier/single-language models, not usable here.
+GROQ_MODELS = {
+    "fast": "openai/gpt-oss-20b",       # clean output, no reasoning-block leakage
+    "quality": "openai/gpt-oss-120b",   # bigger, same clean-output family
+    "reasoning": "qwen/qwen3.6-27b",    # exposes a <think> block - see _strip_reasoning_block
 }
 
 AGENT_CONFIG = {
@@ -156,12 +244,26 @@ class LLMProvider:
 
     @staticmethod
     def call_llm(agent_type: str, system_prompt: str, user_input: str) -> str:
-        """Call an LLM with the configured backend."""
+        """
+        Try Ollama (local, free) first; fall back to Groq (cloud-hosted
+        open-weight models) if Ollama returns nothing. No environment-
+        variable switch needed: _call_ollama's own health check already
+        fails fast (~2s, see _service_is_available) when Ollama isn't
+        reachable - e.g. on Streamlit Cloud/GCP with no local Ollama - so
+        the exact same code naturally uses Ollama on a machine that has
+        it, and Groq anywhere that doesn't.
+        """
         try:
             config = AGENT_CONFIG.get(agent_type, DEFAULT_AGENT_CONFIG)
-            if LLM_PROVIDER == "ollama":
-                return LLMProvider._call_ollama(system_prompt, user_input, config)
-            logger.error("Unknown LLM provider: %s", LLM_PROVIDER)
+            result = LLMProvider._call_ollama(system_prompt, user_input, config)
+            if result:
+                return result
+
+            if GROQ_CONFIG:
+                logger.info("Ollama unavailable/empty for '%s' - trying Groq fallback.", agent_type)
+                result = LLMProvider._call_groq(system_prompt, user_input, config)
+                if result:
+                    return result
             return ""
         except Exception as e:
             logger.error("LLM call failed for agent '%s': %s", agent_type, e)
@@ -595,5 +697,71 @@ class LLMProvider:
                 logger.error("LLM Processing Error: model=%s error=%s", current_model, e)
                 LLMProvider._record_failure(current_model)
                 return ""
+
+    @staticmethod
+    def _call_groq(system_prompt: str, user_input: str, config: Dict[str, Any], model: str = None) -> str:
+        """
+        Groq's API is OpenAI-compatible, so this reuses the `openai`
+        package (already in requirements.txt, never actually wired to
+        anything until now) instead of a new SDK - same client class,
+        just pointed at Groq's base_url.
+
+        Deliberately simpler than _call_ollama: Groq is a hosted, always-
+        available service, not a local process that can have "model not
+        installed" or "out of memory" problems, so none of that
+        local-inventory circuit-breaker logic applies here - just a
+        timeout and returning "" on failure so call_llm's caller sees a
+        normal empty-response failure, same as an Ollama failure would
+        look like.
+        """
+        if not GROQ_CONFIG:
+            return ""
+        try:
+            from openai import OpenAI
+        except ImportError:
+            logger.error("Groq fallback needs the 'openai' package, which isn't installed.")
+            return ""
+
+        model = model or GROQ_MODELS["fast"]
+        try:
+            timeout_seconds = int(config.get("timeout_seconds", 30))
+        except (TypeError, ValueError):
+            timeout_seconds = 30
+        temperature = config.get("temperature", 0.5)
+        # Groq is fast enough that a slightly generous token budget costs
+        # little real latency - reusing Ollama's num_predict verbatim was
+        # too tight in testing (a 150-token budget cut off a short "give
+        # me 2 tips" reply), so this floors it at 300 rather than
+        # inheriting a value tuned for local Ollama generation speed.
+        try:
+            max_tokens = max(int(config.get("num_predict", 300)), 300)
+        except (TypeError, ValueError):
+            max_tokens = 300
+
+        try:
+            client = OpenAI(
+                api_key=GROQ_CONFIG["api_key"],
+                base_url=GROQ_CONFIG["base_url"],
+                timeout=timeout_seconds,
+            )
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_input},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            content = response.choices[0].message.content or ""
+            content = _strip_reasoning_block(content)
+            if content and not _ends_cleanly(content):
+                logger.warning(
+                    "Groq reply may be incomplete: model=%s content_len=%d", model, len(content)
+                )
+            return content
+        except Exception as e:
+            logger.error("Groq call failed: model=%s error=%s", model, e)
+            return ""
 
         return ""

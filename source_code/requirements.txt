@@ -23,6 +23,12 @@ langchain-ollama==0.1.3
 langgraph==0.2.76
 langsmith==0.1.147
 textblob==0.17.1
+# Was in requirements.txt but never actually imported anywhere until the
+# Groq fallback provider (llm_provider.py::_call_groq) - Groq's API is
+# OpenAI-compatible, so this SDK talks to Groq too, just pointed at a
+# different base_url. Verified directly against openai==3.6.0 (whatever
+# >=1.0.0 resolves to today); no reason to pin tighter unless a future
+# version breaks something.
 openai>=1.0.0
 faiss-cpu>=1.7.4
 numpy>=1.21.0
