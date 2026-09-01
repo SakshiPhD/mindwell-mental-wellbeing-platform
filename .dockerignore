@@ -1,0 +1,38 @@
+# Never bake real secrets into the image - the whole reason this file
+# exists before COPY . . in the Dockerfile.
+.streamlit/secrets.toml
+
+.git/
+.github/
+
+# Source PDFs for the one-time RAG seeding step (ingest_documents.py) -
+# the knowledge base is already seeded in the real DB; not needed at
+# runtime, and it's the single largest thing in the repo.
+documents/
+
+documentation/
+Mindwell_Project_Context_Document.docx
+MINDWELL_PROJECT_CONTEXT_AND_LLMOPS_ROADMAP.md
+*.md
+
+# Tests and evals aren't part of the running app.
+source_code/tests/
+source_code/evaluations/
+
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+.venv/
+venv/
+mental_env/
+env/
+
+.pytest_cache/
+.DS_Store
+*.log
+
+project_report/
+submission_checklist/
+backup/
+old/
