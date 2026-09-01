@@ -1379,9 +1379,16 @@ After implementation, report:
       the owner previously; still open, now with two checks ("pytest"
       and "safety") to select once enabled.
 - [ ] Controlled CD/staging workflow configured
-- [ ] Dockerfile and `.dockerignore` added
-- [ ] Docker image builds and runs
-- [ ] Secrets and environments configured
+- [x] Dockerfile and `.dockerignore` added — python:3.12-slim, preserves
+      the source_code/ + .streamlit/ sibling layout that secrets
+      resolution depends on; verified 2026-09-01, see Living Status Log
+- [x] Docker image builds and runs — real `docker build` + `docker run`,
+      Streamlit responds HTTP 200, `/_stcore/health` returns `ok`, real
+      Neon DB connection confirmed live from inside the container
+- [ ] Secrets and environments configured — confirmed real secrets are
+      NOT baked into the image (mounted at `docker run` time instead);
+      full staging/cloud secret-injection setup (e.g. GCP Secret Manager)
+      still open
 - [ ] Streamlit staging deployed
 - [ ] Hosted model endpoint connected
 - [ ] Staging smoke tests pass
@@ -1545,6 +1552,54 @@ Next hypothesis/experiment: the pytest-suite CI job is live and merged
   DB/client review, caching (all in Backlog). Per the owner's stated plan
   (2026-08-27): CI/CD and deployment readiness is the active track.
 ```
+
+Update (2026-09-01): Multi-provider LLM support added — Ollama stays
+  primary (local, free), Groq added as an automatic cloud fallback
+  (llm_provider.py::call_llm tries Ollama first, falls back to Groq only
+  if Ollama's health check fails or returns nothing; no env-var switch
+  needed, same code path works unchanged on a machine with no local
+  Ollama, e.g. Streamlit Cloud/GCP). Groq is OpenAI-API-compatible,
+  reached via the `openai` SDK pointed at a different base_url; it
+  serves open-weight models only (no proprietary GPT/Claude), keeping
+  the "open-source only" constraint. A reasoning model
+  (qwen/qwen3.6-27b) was found to leak raw `<think>...</think>`
+  chain-of-thought when its token budget ran out before the closing tag
+  arrived — fixed generically in `_strip_reasoning_block()` (an unclosed
+  block now returns "" instead of leaking raw reasoning).
+  evaluations/model_comparison.py built specifically because all 5
+  existing eval datasets are chat-model-independent (verified via
+  import inspection — none of them call an LLM at all, so pointing them
+  at a different model would score identically regardless). Live 4-model
+  comparison across the real Safety/Memory/Coach agents found
+  groq/openai/gpt-oss-20b was unsafe for the Safety agent's strict-JSON
+  prompt (safety_accuracy 44%, memory_json_complete_rate 20% — the model
+  sometimes ignored "output ONLY this JSON" on emotionally-heavy
+  messages, which silently defaulted risk to "low" downstream). Fixed by
+  switching GROQ_MODELS["fast"]/["quality"] to openai/gpt-oss-120b
+  (safety_accuracy 100%, memory 80%, near-identical latency) — caught
+  before any deployment, not after.
+Update (2026-09-01): Docker milestone done. Dockerfile (python:3.12-slim)
+  + .dockerignore added on feature/docker-deployment, merged via PR #6
+  (both "safety" and "pytest" CI checks green). Verified with a real
+  `docker build` + `docker run`, not just a written-and-assumed
+  Dockerfile: image builds clean, container boots and responds
+  HTTP 200 / `/_stcore/health` ok, real Neon DB connection confirmed
+  live from inside the container (secrets.toml mounted read-only, not
+  baked into the image — confirmed absent from a fresh `docker run`
+  with no mount), tests/evaluations/documents/ confirmed absent from
+  the image, full pytest suite (107/107) unaffected. Image size 1.14GB.
+  Not yet done: pushing the image anywhere (registry), staging
+  deployment, hosted-model-endpoint wiring for a no-Ollama environment,
+  smoke tests against a deployed instance, rollback procedure.
+Next hypothesis/experiment: branch protection on main is still not
+  confirmed enabled (open since 2026-08-31, owner's action). Remaining
+  CI/CD checklist chunk: choose a hosting target (GCP Cloud Run was the
+  stated direction) and push the image to a registry, configure
+  secrets there (not the local volume-mount pattern used for this
+  verification), connect a real staging URL, run a smoke test against
+  it, and only then consider rollback procedure / experiment-tracking /
+  model-registry items. Backlog items below remain untouched and
+  non-blocking.
 
 ---
 
